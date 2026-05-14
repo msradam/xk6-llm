@@ -1,8 +1,8 @@
 # xk6-llm
 
-**LLM-aware load testing for k6 — TTFT, ITL, and token-throughput metrics for any OpenAI-compatible chat-completions server.**
+**LLM-aware load testing for k6. TTFT, ITL, TPOT, goodput, and token-throughput metrics for any OpenAI-compatible chat-completions server.**
 
-A k6 extension that turns k6 into a production-grade benchmark client for LLM inference servers (vLLM, TGI, llama.cpp server, NIM, etc.). Streaming-first, with per-chunk timing that matches `vllm bench serve` semantics so results are directly comparable.
+A k6 extension for benchmarking LLM inference servers (vLLM, SGLang, TGI, llama.cpp server, Ollama, NIM, OpenAI). Streaming-first. Per-chunk timing matches `vllm bench serve` semantics so results cross-validate.
 
 ## Metrics
 
@@ -11,7 +11,7 @@ A k6 extension that turns k6 into a production-grade benchmark client for LLM in
 | `llm_requests` | Counter | Successful chat completions |
 | `llm_errors` | Counter | Failed requests (HTTP error, stream error, timeout) |
 | `llm_request_duration` | Trend (Time) | End-to-end wall time |
-| `llm_ttft` | Trend (Time) | **T**ime **T**o **F**irst **T**oken — measured at the first SSE chunk with non-empty `choices[0].delta.content`. Role-only deltas are skipped. |
+| `llm_ttft` | Trend (Time) | Time to first token. Measured at the first SSE chunk with non-empty `choices[0].delta.content`. Role-only deltas are skipped. |
 | `llm_itl` | Trend (Time) | **I**nter-token (per-chunk) latency. First sample is `t[chunk₂] - t[chunk₁]`, NOT `t[chunk₁] - start`. Matches vLLM. |
 | `llm_prompt_tokens` | Counter | From the server's `usage.prompt_tokens`, if emitted |
 | `llm_completion_tokens` | Counter | From the server's `usage.completion_tokens`, if emitted |
@@ -59,7 +59,7 @@ xk6 build --with github.com/msradam/xk6-llm=. --output build/k6
 
 ## Attribution
 
-This codebase was developed with assistance from [Claude Code](https://claude.com/claude-code). The metric definitions, build conventions, and design decisions are documented in [`CLAUDE.md`](./CLAUDE.md) and [`RESEARCH.md`](./RESEARCH.md) — these are checked-in working notes, not generated boilerplate. Issues and PRs are reviewed and merged by humans.
+This codebase was developed with assistance from [Claude Code](https://claude.com/claude-code). Metric definitions, build conventions, and design decisions are documented in [`CLAUDE.md`](./CLAUDE.md) and [`RESEARCH.md`](./RESEARCH.md); both are checked-in working notes, not generated boilerplate. Issues and PRs are reviewed and merged by humans.
 
 ## License
 
