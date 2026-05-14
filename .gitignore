@@ -1,0 +1,6 @@
+/build/
+/k6
+coverage.txt
+*.test
+.DS_Store
+node_modules/

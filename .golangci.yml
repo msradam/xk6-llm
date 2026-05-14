@@ -1,0 +1,28 @@
+version: "2"
+linters:
+  default: all
+  disable:
+    - gochecknoinits
+    - ireturn
+    - exhaustruct
+    - varnamelen
+    - wrapcheck
+  settings:
+    depguard:
+      rules:
+        prevent_accidental_imports:
+          allow:
+            - $gostd
+            - github.com/stretchr/testify/require
+            - go.k6.io/k6
+            - github.com/grafana/sobek
+            - github.com/msradam/xk6-llm
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
