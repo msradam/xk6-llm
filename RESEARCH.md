@@ -187,9 +187,11 @@ SLO is on the **99th percentile**, measured by LoadGen across the run.
 
 ---
 
-## A.5 genai-perf (NVIDIA Triton) → being replaced by AIPerf
+## A.5 genai-perf (NVIDIA Triton) → AIPerf (now public)
 
-**Repo:** [github.com/triton-inference-server/perf_analyzer](https://github.com/triton-inference-server/perf_analyzer) — BSD-3-Clause — ~143 stars — last push 2026-05-08. **Deprecated** in favor of AIPerf (repo not yet public under searched names).
+**Repo:** [github.com/triton-inference-server/perf_analyzer](https://github.com/triton-inference-server/perf_analyzer) — BSD-3-Clause — ~143 stars — last push 2026-05-08. **Deprecated** in favor of AIPerf.
+
+**Successor (verified May 2026):** [github.com/ai-dynamo/aiperf](https://github.com/ai-dynamo/aiperf) — Apache-2.0 — ~294 stars — v0.7.0 released 2026-04-07. Installable as `pip install aiperf`. Distributed multiprocess architecture (9 services over ZMQ), real-time TUI dashboard, MLflow + OpenTelemetry streaming, plugin system, multiple modes (concurrency / request-rate / trace replay). **ITL semantics unchanged: still scalar `(e2e − ttft)/(n − 1)`** — not a per-chunk vector. The definitional fork called out in §A.7 still applies.
 
 ### Metric definitions ([NVIDIA NIM benchmarking docs](https://docs.nvidia.com/nim/benchmarking/llm/latest/metrics.html))
 
@@ -239,20 +241,37 @@ Plenty of community gists exist. **No standardization** — TTFT/ITL semantics a
 - `benchmarks/cpp/gptManagerBenchmark` — C++ in-process; not HTTP. Not comparable.
 - `benchmarks/Suite/` (Python) — wraps genai-perf and `vllm bench serve`. Validation is transitive.
 
-### A.6d. AIPerf (the genai-perf successor)
-NVIDIA's stated replacement. Repo not at a stable public path discoverable via `gh api` yet. Definitions documented at the NIM benchmarking site; intended to match genai-perf semantics.
+### A.6d. AIPerf (the genai-perf successor) — see §A.5
+
+Repo now public; see §A.5 for current status. Earlier note that it wasn't yet discoverable is superseded.
+
+### A.6e. SGLang `bench_serving`
+
+**Repo:** [github.com/sgl-project/sglang](https://github.com/sgl-project/sglang) — Apache-2.0 — ~30k+ stars — actively maintained.
+
+Driver at [`python/sglang/bench_serving.py`](https://github.com/sgl-project/sglang/blob/main/python/sglang/bench_serving.py); docs at [docs.sglang.io/developer_guide/bench_serving.html](https://docs.sglang.io/developer_guide/bench_serving.html). Metric semantics align with vLLM bench serve (per-chunk vector ITL, first-content-chunk TTFT, Poisson arrival). Adds **`accept_length`** field for speculative-decoding diagnostics — mean accepted tokens per draft batch, scraped from server response metadata. Accepts the same `--goodput ttft:X tpot:Y e2el:Z` syntax. **A valid secondary cross-check** alongside vLLM bench serve; useful when the SUT is SGLang itself.
+
+### A.6f. HF `optimum-benchmark` + `llm-perf-leaderboard`
+
+**Repo:** [github.com/huggingface/optimum-benchmark](https://github.com/huggingface/optimum-benchmark) — Apache-2.0 — ~600 stars. **Not a load tester.** It runs forward passes at fixed batch and reports `decode/throughput`, `prefill/latency`, memory — model-card-style numbers, not request-distribution latency. Powers the [llm-perf-leaderboard HF Space](https://huggingface.co/spaces/optimum/llm-perf-leaderboard). Useful for hardware-level capacity planning; **not comparable to `xk6-llm` output.** Listed here because it's frequently confused with the load-tester category.
+
+### A.6g. Artificial Analysis (closed-source prober)
+
+[artificialanalysis.ai/methodology](https://artificialanalysis.ai/methodology/performance-benchmarking) — proprietary, weekly. Sets several de-facto reporting conventions: **P50+P95 reporting** (not just mean), **separate reasoning-token TTFT** (first token vs first answer-content token for o1-/r1-style models), per-region latency. Their methodology page is worth reading as a reporting-format reference even though the prober isn't open.
 
 ---
 
 ## A.7 Cross-cutting comparison
 
-| Tool | TTFT def | ITL def | Arrival | Tokenizer | Open-loop? |
-|---|---|---|---|---|---|
-| vLLM bench serve | first content chunk | per-chunk vector | Poisson + Gamma + const | client (HF, configurable) | yes |
-| GuideLLM | first content chunk | per-chunk vector | sync / concurrent / Poisson / const / sweep | configurable | yes |
-| LLMPerf | first content chunk | sum-of-deltas / N (scalar) | closed-loop only | hard-coded LlamaTokenizer | **no** |
-| MLPerf Server | LoadGen callback at first token | scalar from totals | Poisson @ target QPS | dataset-fixed reference tokenizer | yes |
-| genai-perf | first chunk (via Perf Analyzer events) | scalar `(e2e-TTFT)/(N-1)` | concurrency / req-rate (Poisson opt) / custom | configurable | yes |
+| Tool | TTFT def | ITL def | Arrival | Tokenizer | Open-loop? | Goodput? |
+|---|---|---|---|---|---|---|
+| vLLM bench serve | first content chunk | per-chunk vector | Poisson + Gamma + const | client (HF, configurable) | yes | **yes** (`--goodput ttft:X tpot:Y e2el:Z`, since v0.6.4) |
+| SGLang bench_serving | first content chunk | per-chunk vector | Poisson + const + trace replay | configurable | yes | **yes** (same `--goodput` syntax) |
+| GuideLLM | first content chunk | per-chunk vector | sync / concurrent / Poisson / const / sweep | configurable | yes | yes (per-profile SLO flags; HTML report tags requests "satisfied"/"violated") |
+| AIPerf | first chunk | scalar `(e2e-TTFT)/(N-1)` | concurrency / req-rate (Poisson opt) / trace replay | configurable | yes | partial (per-SLO tracking, not a single goodput number) |
+| LLMPerf | first content chunk | sum-of-deltas / N (scalar) | closed-loop only | hard-coded LlamaTokenizer | **no** | no |
+| MLPerf Server | LoadGen callback at first token | scalar from totals | Poisson @ target QPS | dataset-fixed reference tokenizer | yes | implicit (P99 SLO is the pass/fail) |
+| genai-perf | first chunk (via Perf Analyzer events) | scalar `(e2e-TTFT)/(N-1)` | concurrency / req-rate (Poisson opt) / custom | configurable | yes | no |
 
 The biggest definitional fork: **vLLM and GuideLLM keep ITL as a vector of per-chunk deltas; genai-perf and MLPerf use a single scalar derived from totals.** If `xk6-llm` emits per-chunk deltas as a k6 trend metric, you can produce both views.
 
@@ -311,6 +330,7 @@ k6 run --out json=xk6.json xk6-llm-script.js
 4. **Mean ITL** within ±0.5 ms or ±5%.
 5. **Output token throughput** (system) within ±2%.
 6. **Request throughput** within ±1% (basically `n / wall_clock`).
+7. **Goodput** (with identical `--goodput ttft:X tpot:Y e2el:Z` SLOs supplied to both tools) within ±1 percentage point — i.e., if vLLM reports `request_goodput=3.42 req/s` out of 4.0 offered, `xk6-llm` must report between 3.38 and 3.46. Disagreement larger than that = SLO-predicate or TPOT-derivation bug.
 
 **Typical disagreement diagnoses:**
 
@@ -334,8 +354,10 @@ After vLLM agreement, run GuideLLM `poisson` profile at the same rate/dataset. A
 ## A.9 Sources
 
 - [vLLM](https://github.com/vllm-project/vllm)
-- [GuideLLM](https://github.com/neuralmagic/guidellm)
-- [LLMPerf (archived)](https://github.com/ray-project/llmperf)
+- [GuideLLM](https://github.com/vllm-project/guidellm) (moved under vllm-project org)
+- [SGLang `bench_serving.py`](https://github.com/sgl-project/sglang/blob/main/python/sglang/bench_serving.py) · [SGLang docs](https://docs.sglang.io/developer_guide/bench_serving.html)
+- [AIPerf](https://github.com/ai-dynamo/aiperf) · [aiperf.org](https://aiperf.org/)
+- [LLMPerf](https://github.com/ray-project/llmperf)
 - [MLPerf inference](https://github.com/mlcommons/inference) · [rules](https://github.com/mlcommons/inference_policies/blob/master/inference_rules.adoc)
 - [Perf Analyzer / genai-perf](https://github.com/triton-inference-server/perf_analyzer)
 - [NVIDIA NIM LLM benchmarking metrics](https://docs.nvidia.com/nim/benchmarking/llm/latest/metrics.html)
@@ -343,10 +365,105 @@ After vLLM agreement, run GuideLLM `poisson` profile at the same rate/dataset. A
 - [MLCommons Llama2-70B blog](https://mlcommons.org/2024/03/mlperf-llama2-70b/)
 - [MLPerf Inference v5.0 LLM update](https://mlcommons.org/2025/04/llm-inference-v5/)
 - [TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM)
+- [HF optimum-benchmark](https://github.com/huggingface/optimum-benchmark) · [llm-perf-leaderboard](https://huggingface.co/spaces/optimum/llm-perf-leaderboard)
 
 ---
 
-# Part B — xk6 Extension Conventions
+## A.10 Goodput and per-SLO attainment (the primary metric, May 2026)
+
+**Goodput** = requests/sec where **all** per-request SLOs are satisfied simultaneously. A request that returns successfully but misses any SLO counts as zero. Introduced by [DistServe (OSDI'24)](https://arxiv.org/abs/2401.09670) as "the number of completed requests per second adhering to the Service Level Objectives," and has since displaced raw throughput as the primary capacity-planning metric across the serving-systems literature and tooling.
+
+### Where it lives
+
+- **vLLM bench serve** — [PR #9338](https://github.com/vllm-project/vllm/pull/9338), shipped v0.6.4. Flag: `--goodput ttft:3000 tpot:100 e2el:5000` (milliseconds). Only those three keys allowed. Reports `request_goodput` in `--save-result` JSON.
+- **SGLang `bench_serving`** — same `--goodput` flag syntax; `BenchmarkMetrics` tracks per-request SLO satisfaction.
+- **GuideLLM** — per-profile SLO predicates; HTML report colors each request "satisfied"/"violated".
+- **DistServe paper** — uses 90%-attainment as the canonical "achieved goodput" pivot — the offered load at which 90% of requests still meet SLO. Below that pivot you have headroom; above it the system has fallen off the cliff.
+- **Sarathi-Serve (OSDI'24)** — evaluates "maximum sustainable QPS under 90% P99 TBT-SLO attainment." [Paper](https://www.usenix.org/system/files/osdi24-agrawal.pdf).
+- **Smoothed goodput** — [Lin et al., arXiv 2410.14257](https://arxiv.org/html/2410.14257v1) proposes `benefit(r) = n_r − α·f(l_r)` for partial credit. Worth knowing; **not adopted by any production tool**, so stick with binary goodput.
+
+### Realistic SLO thresholds (industry consensus, May 2026)
+
+| Workload | TTFT | TPOT | E2EL |
+|---|---|---|---|
+| Interactive chat | 500 ms | 50 ms | 5 s |
+| RAG / agent | 1500 ms | 75 ms | 15 s |
+| Batch / async | 5000 ms | 200 ms | 60 s |
+| MLPerf Llama2-70B Interactive | 450 ms | 40 ms | — (P99) |
+| MLPerf Llama2-70B Conversational | 2000 ms | 200 ms | — (P99) |
+| MLPerf Llama3.1-405B Server | 6000 ms | 175 ms | — (P99) |
+| MLPerf Llama3.1-405B Interactive | 4500 ms | 80 ms | — (P99) |
+
+MLPerf rows from `inference_rules.adoc`, unchanged from §A.4. Interactive/RAG/batch rows synthesized from common deployment configurations cited in Anyscale, BentoML, and llm-d benchmarking writeups; treat as a starting point, not a standard.
+
+### Companion: per-SLO attainment
+
+When goodput drops, you immediately want to know **which** SLO was violated. Report alongside goodput:
+
+- `slo_attainment_ttft` — fraction of requests with TTFT ≤ slo.ttft
+- `slo_attainment_tpot` — fraction with TPOT ≤ slo.tpot
+- `slo_attainment_e2el` — fraction with E2EL ≤ slo.e2el
+
+These satisfy `goodput / offered_load ≤ min(slo_attainment_*)`. Diagnostic value: if `slo_attainment_tpot=0.50` but the other two are 1.0, the SUT is generating fine but slowly — add capacity. If `slo_attainment_ttft=0.50`, the queue is backed up — increase parallelism upstream of generation.
+
+### `xk6-llm` implementation
+
+- Emit `llm_goodput` as a k6 `Rate` metric: per-request sample is `1` if all supplied SLOs met, `0` otherwise. k6's `Rate` aggregator natively reports as a percentage.
+- Emit `llm_slo_ttft`, `llm_slo_tpot`, `llm_slo_e2el` as `Rate` each.
+- Only emit when the JS-side options object supplies an `slo: { ttft_ms, tpot_ms, e2el_ms }` block. Absent SLOs → these metrics do not register samples, so they don't pollute reports.
+
+---
+
+## A.11 Speculative decoding and prefix-cache awareness
+
+Two engine features that silently break naive benchmark comparisons:
+
+### Speculative decoding makes ITL multimodal
+
+When the server runs a draft model + target verifier (vLLM's `--speculative-config`, SGLang `--speculative-algorithm`, TRT-LLM EAGLE/Medusa/n-gram), it emits **1-to-k accepted tokens per SSE chunk**. Per-chunk ITL (the vLLM/GuideLLM definition) becomes a bimodal or multimodal distribution: short gaps between accepted-batch tokens that arrived together, long gaps between verification batches.
+
+[vLLM issue #6531](https://github.com/vllm-project/vllm/issues/6531) documents the artifact: "inter-token latency is lower than TPOT in serving benchmark result." This is **expected** when chunks carry >1 token, not a bug — but it makes mean-ITL a misleading single number.
+
+**Server-side acceptance rate (α)** — fraction of draft tokens accepted by the target — is exposed in vLLM `/metrics` as `spec_decode_efficiency` (and similar in SGLang). Not in the SSE response yet; would need a separate Prometheus scrape.
+
+**Reporting recommendation:**
+
+- Emit **both** views and let the reader pick:
+  - `llm_chunk_latency` (Trend, Time) — per-chunk inter-arrival, vector. Matches vLLM/GuideLLM/SGLang "ITL."
+  - `llm_tpot` (Trend, Time) — scalar `(e2el − ttft) / (output_tokens − 1)`, computed once per request. Matches AIPerf/genai-perf/MLPerf "TPOT" (which they also confusingly call ITL).
+- Emit `llm_chunks_per_request` (Trend, Default). When `chunks / output_tokens < 1`, the server is batching tokens — interpret `llm_chunk_latency` as per-batch latency, not per-token.
+- **Do not** rename what we currently call `llm_itl`. Existing users have queries built on the name; instead add `llm_chunk_latency` as a synonym and `llm_tpot` as the scalar companion, then plan to deprecate `llm_itl` in v1.
+
+### Prefix caching: 5–10× free TTFT, silently
+
+vLLM (`--enable-prefix-caching`, default since v0.5), SGLang (RadixAttention), TRT-LLM (KV reuse) all reuse cached KV-state for shared prompt prefixes. Effect size from real measurements:
+
+- [llm-d benchmarks](https://llm-d.ai/blog/kvcache-wins-you-can-see): **78% TTFT reduction** (4.3s → <1s) and **254% output throughput improvement** when prefixes are reused.
+- [SqueezeBits vLLM vs TRT-LLM #12](https://blog.squeezebits.com/vllm-vs-tensorrtllm-12-automatic-prefix-caching-38189): with **random** (non-shared) prompts, vLLM with prefix caching *enabled* actually **loses** ~36% throughput and ~25% TPOT due to the index overhead with no hits.
+
+So the dataset's prefix structure dominates the result. A run with shared prefixes silently produces 5–10× lower TTFT than a run with random prompts on the same server.
+
+**vLLM `prefix_repetition` dataset:** controlled by `--prefix-repetition-prefix-len`, `--prefix-repetition-suffix-len`, `--prefix-repetition-num-prefixes`, `--prefix-repetition-output-len`. Total prompts / `num_prefixes` = repetitions per prefix. See [vllm/benchmarks/datasets.py](https://docs.vllm.ai/en/v0.10.1/api/vllm/benchmarks/datasets.html). GuideLLM has an equivalent `prefix_tokens` knob.
+
+**Emerging convention** (no formal standard yet): report **cold-cache TTFT** (first request hitting each prefix) and **warm-cache TTFT** (subsequent requests) separately. vLLM's [`benchmark_prefix_caching.py`](https://github.com/vllm-project/vllm/blob/main/benchmarks/benchmark_prefix_caching.py) splits them; SqueezeBits' comparison posts split them.
+
+**`xk6-llm` implementation:**
+
+- Accept a per-request `cache_state` tag (`cold`/`warm`) supplied by the calling script; emit it as a tag on all per-request metrics. The script is responsible for marking the first occurrence of each prefix as `cold` — `xk6-llm` doesn't infer.
+- Optionally support a dataset helper (out of scope for v0.1, but design for it) that generates prefix-repetition workloads and stamps tags automatically.
+- Document loudly: "if you don't tag `cache_state`, your TTFT distribution is a mixture and the mean number means nothing."
+
+### Reasoning models (o1-, DeepSeek-R1-, gpt-oss-style)
+
+Reasoning models emit a long invisible reasoning trace before the user-visible answer. Streaming clients typically receive this as either:
+- A separate field `delta.reasoning_content` (OpenAI's o-series convention, also in OpenRouter, some Anthropic-compat shims);
+- Inline `<think>...</think>` blocks within `delta.content` (DeepSeek-R1, Qwen3-thinking).
+
+For these, vLLM's "first content chunk" TTFT can be **5–30× higher** than the perceived "time to first answer token," because the user has to wait through the reasoning trace. Artificial Analysis reports both: "TTFT" (time to first token of any kind) and a separate "time to first answer token."
+
+**`xk6-llm` consideration:** detection is provider-specific and noisy. Defer to v0.2; document the issue so users aware of reasoning workloads know to interpret TTFT carefully.
+
+---
 
 A survey of conventions across major `xk6` extensions, with citations, plus a canonical skeleton.
 
@@ -354,7 +471,7 @@ A survey of conventions across major `xk6` extensions, with citations, plus a ca
 
 - **Official template: YES.** [`grafana/xk6-example`](https://github.com/grafana/xk6-example). Both a GitHub template and the basis for `xk6 new`. Start here.
 - **Go version (current `xk6-sql` and `xk6-example`):** `go 1.25.0`, `toolchain go1.25.10`.
-- **k6 version:** `go.k6.io/k6/v2 v2.0.0-rc1`. CI pins `k6-versions: '["v2.0.0-rc1"]'` and `xk6-version: "1.4.1"`. **For a NEW extension, use the v2 import path:** `go.k6.io/k6/v2/js/modules`. Older extensions (`xk6-redis`, `xk6-browser`, `xk6-disruptor`, `xk6-kafka`) still import `go.k6.io/k6` (v1) — don't copy that.
+- **k6 version:** `go.k6.io/k6/v2 v2.0.0` (GA, since May 2026; previously rc1 during the v2 preview window). CI pins `k6-versions: '["v2.0.0"]'` and `xk6-version: "1.4.1"`. **For a NEW extension, use the v2 import path:** `go.k6.io/k6/v2/js/modules`. Older extensions (`xk6-redis`, `xk6-browser`, `xk6-disruptor`, `xk6-kafka`) still import `go.k6.io/k6` (v1) — don't copy that.
 - **Import path convention:** `k6/x/<short-name>`, where `<short-name>` is the repo name minus `xk6-`. So `xk6-llm` → **`k6/x/llm`**. Confirmed across every extension. Sub-paths are legal: `xk6-browser` uses `k6/x/browser/async`.
 
 ---

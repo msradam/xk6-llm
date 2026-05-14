@@ -57,6 +57,10 @@ xk6 build --with github.com/msradam/xk6-llm=. --output build/k6
 |---------|-----------|-------|
 | v0.x    | v2.0.0-rc1 | 1.4.1 |
 
+## Attribution
+
+This codebase was developed with assistance from [Claude Code](https://claude.com/claude-code). The metric definitions, build conventions, and design decisions are documented in [`CLAUDE.md`](./CLAUDE.md) and [`RESEARCH.md`](./RESEARCH.md) — these are checked-in working notes, not generated boilerplate. Issues and PRs are reviewed and merged by humans.
+
 ## License
 
 Apache-2.0

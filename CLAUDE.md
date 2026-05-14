@@ -13,7 +13,7 @@ This file is the **runbook**: stack, layout choices, build, deterministic checks
 ## Stack
 
 - **Language:** Go 1.25.x (toolchain `go1.25.10`).
-- **k6 API:** `go.k6.io/k6/v2 v2.0.0-rc1` — **always the `/v2/` import paths** (`go.k6.io/k6/v2/js/modules`, `.../js/promises`, `.../js/common`, `.../js/modulestest`, `.../metrics`).
+- **k6 API:** `go.k6.io/k6/v2 v2.0.0` (GA) — **always the `/v2/` import paths** (`go.k6.io/k6/v2/js/modules`, `.../js/promises`, `.../js/common`, `.../js/modulestest`, `.../metrics`).
 - **JS runtime binding:** `github.com/grafana/sobek` (NOT `dop251/goja`).
 - **xk6:** `1.4.1`.
 - **golangci-lint:** v2.7.1 (config `version: "2"`).
@@ -221,7 +221,7 @@ jobs:
       go-versions: '["1.25.x"]'
       golangci-lint-version: "v2.7.1"
       platforms: '["ubuntu-latest","windows-latest","macos-latest"]'
-      k6-versions: '["v2.0.0-rc1"]'
+      k6-versions: '["v2.0.0"]'
       xk6-version: "1.4.1"
       xk6-test-pattern: "test/*.test.{j,t}s"
 ```
@@ -238,7 +238,7 @@ jobs:
       go-version: "1.25.x"
       os:   '["linux","windows","darwin"]'
       arch: '["amd64","arm64"]'
-      k6-version: "v2.0.0-rc1"
+      k6-version: "v2.0.0"
       xk6-version: "1.4.1"
 ```
 
