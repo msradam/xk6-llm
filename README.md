@@ -14,9 +14,12 @@ A k6 extension for load-testing LLM inference servers. Streaming TTFT/ITL/TPOT, 
 
 ```bash
 go install go.k6.io/xk6/cmd/xk6@latest
+mkdir -p build
 xk6 build --with github.com/msradam/xk6-llm@latest --output build/k6
 ./build/k6 version
 ```
+
+If you're on a platform `xk6 build` does not recognize (linux/s390x, linux/ppc64le, freebsd, etc.), see [`CONTRIBUTING.md`](./CONTRIBUTING.md#building-on-unsupported-platforms) for a `go build` recipe that bypasses xk6's allow-list.
 
 ## Example
 

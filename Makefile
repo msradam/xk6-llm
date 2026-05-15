@@ -41,6 +41,7 @@ test:
 
 build-verify:
 	@command -v xk6 >/dev/null || go install go.k6.io/xk6/cmd/xk6@$(XK6_VERSION)
+	mkdir -p build
 	xk6 build --with $(MODULE)=. --output build/k6
 	./build/k6 version
 
