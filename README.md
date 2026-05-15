@@ -8,6 +8,8 @@ A k6 extension for benchmarking OpenAI-compatible chat-completions servers. Stre
 
 ![xk6-llm demo](./quickstart/img/demo.gif)
 
+*Live recording against Ollama on an M3 MacBook Air. The framework is the same end to end: the script, the dashboard, the metric set work identically whether you point at your laptop, a hosted API, or a vLLM cluster on H100s. Only the numbers change.*
+
 ## Build
 
 ```bash
