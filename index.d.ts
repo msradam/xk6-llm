@@ -69,7 +69,10 @@ declare module 'k6/x/llm' {
     ttft_ms: number;
     /** Per-chunk inter-arrival in milliseconds. Length equals chunks - 1. */
     itl_ms: number[];
-    /** Scalar (e2e - ttft) / (n - 1). 0 when not derivable (completion_tokens <= 1). */
+    /**
+     * Scalar (duration_ms - ttft_ms) / (completion_tokens - 1). Returns 0 when
+     * not derivable (completion_tokens <= 1, or no TTFT, or duration <= ttft).
+     */
     tpot_ms: number;
     duration_ms: number;
     response_headers_ms: number;

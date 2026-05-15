@@ -86,11 +86,12 @@ curl -sS "$ENDPOINT/v1/chat/completions" \
 
 ## Logs
 
-`runpodctl` has no `logs` subcommand. Either use the web console (`https://www.runpod.io/console/pods` → Logs) or SSH:
+`runpodctl` has no `logs` subcommand. Use the web console (`https://www.runpod.io/console/pods` → Logs) or SSH into the pod:
 
 ```bash
 runpodctl ssh info $POD_ID   # prints the ssh command
-ssh ... 'cat /proc/1/fd/1'   # vLLM runs as PID 1
+# inside the container, the vLLM api_server runs as a child of /sbin/docker-init:
+ssh ... 'cat /proc/$(pgrep -f vllm.entrypoints.openai.api_server)/fd/1'
 ```
 
 Common boot failures:

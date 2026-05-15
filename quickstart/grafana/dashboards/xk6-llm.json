@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Inference-server load testing with xk6-llm. TTFT, ITL, TPOT, goodput, throughput, energy, and cost \u2014 all per-model.",
+  "description": "Inference-server load testing with xk6-llm. TTFT, ITL, TPOT, goodput, throughput, energy, and cost - all per-model.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -620,7 +620,7 @@
         "x": 0,
         "y": 24
       },
-      "description": "Lower bars on turns 2+ mean the server's prefix cache is doing real work. With multi-turn sessions and shared system prompts, the gap can be 5x to 15x.",
+      "description": "Lower values on turns 2 and beyond mean the server's prefix cache is doing real work. With multi-turn sessions and shared system prompts, the gap can be 5x to 15x.",
       "fieldConfig": {
         "defaults": {
           "unit": "ms",
@@ -664,7 +664,7 @@
         "x": 12,
         "y": 24
       },
-      "description": "When the same context is reused across turns, the warm-cache calls cost less. The gap here is the savings real chat apps see.",
+      "description": "Warm turns send a larger context (the conversation history), so per-call cost typically grows even when TTFT drops. The gap shows the cost-of-context tradeoff.",
       "fieldConfig": {
         "defaults": {
           "unit": "currencyUSD",
@@ -823,7 +823,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "xk6-llm \u2014 Inference benchmark",
+  "title": "xk6-llm - Inference benchmark",
   "uid": "xk6-llm",
   "version": 1,
   "weekStart": ""

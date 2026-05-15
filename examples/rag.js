@@ -2,10 +2,10 @@
 // phase measured against its own SLO. Emits k6-native Trends for embed and
 // retrieve so the dashboard can show the full envelope.
 //
-// Set EMBED_URL and RETRIEVE_URL to real endpoints, or leave unset to use the
-// stub URLs (which return immediately). The point is the instrumentation
-// pattern, which works the same against a real embeddings server (OpenAI,
-// vLLM, TEI) and a real vector DB (Qdrant, Pinecone, pgvector).
+// Set EMBED_URL and RETRIEVE_URL to real endpoints. Defaults POST to
+// httpbin.org so the script runs out of the box; swap in a real embeddings
+// server (OpenAI, vLLM, TEI) and vector DB (Qdrant, Pinecone, pgvector) for
+// numbers that mean something.
 //
 // Run:
 //   ./build/k6 run examples/rag.js \
