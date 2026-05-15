@@ -121,7 +121,7 @@ A converter for ShareGPT V3 to this format lives at `scripts/sharegpt_to_jsonl.p
 
 ## What you can simulate
 
-k6's load generator is a JavaScript runtime, so a single VU can carry conversation state, branch on responses, and drive multi-call workflows. xk6-llm doesn't define a session or agent abstraction; instead, the patterns live in [`examples/`](./examples/) and use the existing `Client` plus k6's `tags` to make the workflow visible in the dashboard.
+k6 is a Go binary that executes test scripts written in JavaScript (TypeScript supported), so a single VU can carry conversation state, branch on responses, and drive multi-call workflows in user code. xk6-llm doesn't define a session or agent abstraction; instead, the patterns live in [`examples/`](./examples/) and use the existing `Client` plus k6's `tags` to make the workflow visible in the dashboard.
 
 | Example | What it shows |
 |---|---|
