@@ -74,6 +74,12 @@ class Session {
       tags:        { session_id: this.id, turn: String(this.turn) },
     });
     this.messages.push({ role: 'assistant', content: res.content });
+    const snippet = res.content.replace(/\s+/g, ' ').slice(0, 60);
+    console.log(
+      `[vu=${__VU} t=${this.turn}] ttft=${res.ttft_ms.toFixed(0)}ms ` +
+      `tpot=${res.tpot_ms.toFixed(1)}ms toks=${res.completion_tokens} ` +
+      `${this.turn === 1 ? 'COLD' : 'warm'} | "${snippet}…"`,
+    );
     return res;
   }
 }
