@@ -1,12 +1,21 @@
 package llm
 
 import (
+	"context"
 	"errors"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+// fakeTimeoutError implements net.Error with Timeout() returning true.
+type fakeTimeoutError struct{}
+
+func (fakeTimeoutError) Error() string   { return "fake timeout" }
+func (fakeTimeoutError) Timeout() bool   { return true }
+func (fakeTimeoutError) Temporary() bool { return true }
 
 // Pure-function tests covering helpers that don't need a k6 VU runtime.
 
@@ -18,6 +27,27 @@ func TestChatError_ErrorAndUnwrap(t *testing.T) {
 	require.Same(t, inner, errors.Unwrap(ce))
 	require.Equal(t, errKindNetwork, errorKind(ce))
 	require.Equal(t, errKindNetwork, errorKind(inner)) // fallback when not a chatError
+}
+
+func TestClassifyTransportError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, ""},
+		{"net.Error timeout", fakeTimeoutError{}, errKindTimeout},
+		{"context.DeadlineExceeded", context.DeadlineExceeded, errKindTimeout},
+		{"url.Error wrapping timeout", &url.Error{Op: "Get", URL: "http://x", Err: fakeTimeoutError{}}, errKindTimeout},
+		{"plain error falls back to network", errors.New("connection refused"), errKindNetwork},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, classifyTransportError(tc.err))
+		})
+	}
 }
 
 func TestChatRequest_TagSet(t *testing.T) {
