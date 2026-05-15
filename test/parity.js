@@ -10,7 +10,7 @@
 //   ./build/k6 run test/parity.js \
 //     -e LLM_BASE_URL=https://<pod>-8000.proxy.runpod.net/v1 \
 //     -e LLM_MODEL=Qwen/Qwen2.5-72B-Instruct-AWQ \
-//     -e LLM_DATASET=data/sample-prompts.jsonl \
+//     -e LLM_DATASET=examples/data/sample-prompts.jsonl \
 //     --summary-export=/tmp/xk6_parity.json
 import llm from 'k6/x/llm';
 
@@ -42,7 +42,7 @@ const client = new llm.Client({
 });
 
 const dataset = new llm.Dataset({
-  path: __ENV.LLM_DATASET ?? 'data/sample-prompts.jsonl',
+  path: __ENV.LLM_DATASET ?? 'examples/data/sample-prompts.jsonl',
   seed: parseInt(__ENV.LLM_SEED ?? '42', 10),
   shuffle: true,
 });

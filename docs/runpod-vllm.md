@@ -46,11 +46,11 @@ ENDPOINT="https://${POD_ID}-8000.proxy.runpod.net"
 
 | phase | duration |
 |---|---|
-| Container scheduling | 30–60 s |
-| Image pull | 1–2 min |
-| HF model download (40GB AWQ) | 4–6 min |
-| vLLM init + CUDA graph capture | 60–90 s |
-| **Total** | **~7–10 min** |
+| Container scheduling | 30-60 s |
+| Image pull | 1-2 min |
+| HF model download (40GB AWQ) | 4-6 min |
+| vLLM init + CUDA graph capture | 60-90 s |
+| **Total** | **~7-10 min** |
 
 A restart with the cached volume skips the download (~2 min).
 

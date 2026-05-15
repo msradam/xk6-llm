@@ -25,7 +25,7 @@ func TestParseEnergy(t *testing.T) {
 			want: &EnergyModel{JPerInputToken: 0.5, JPerOutputToken: 1.2, IdleW: 50},
 		},
 		{
-			name: "partial — only output",
+			name: "partial: only output",
 			raw:  map[string]any{"j_per_output_token": 1.0},
 			want: &EnergyModel{JPerOutputToken: 1.0},
 		},

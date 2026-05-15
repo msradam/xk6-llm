@@ -12,7 +12,7 @@ Same idle vLLM 0.21.0 server (Qwen2.5-72B-Instruct-AWQ, A100 80GB PCIe, RunPod) 
 | max_tokens | 128 (`ignore_eos=true`) |
 | seed | 42 |
 
-xk6-llm replays `data/sample-prompts.jsonl` (real prompts, ~41 input tokens/req). vllm bench uses `--dataset-name random --random-input-len 64`. Reference tolerances: TTFT mean within 5 ms or 2%, ITL mean within 0.5 ms or 5%.
+xk6-llm replays `examples/data/sample-prompts.jsonl` (real prompts, ~41 input tokens/req). vllm bench uses `--dataset-name random --random-input-len 64`. Reference tolerances: TTFT mean within 5 ms or 2%, ITL mean within 0.5 ms or 5%.
 
 ## Results
 
@@ -53,7 +53,7 @@ Root cause: the RunPod HTTPS proxy enforces per-tenant stream limits. vllm bench
 ./build/k6 run test/parity.js \
   -e LLM_BASE_URL=https://<pod>-8000.proxy.runpod.net/v1 \
   -e LLM_MODEL=Qwen/Qwen2.5-72B-Instruct-AWQ \
-  -e LLM_DATASET=data/sample-prompts.jsonl \
+  -e LLM_DATASET=examples/data/sample-prompts.jsonl \
   -e LLM_NUM_PROMPTS=100 -e LLM_RATE=2 -e LLM_MAX_TOKENS=128
 
 # vllm bench

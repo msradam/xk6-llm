@@ -2,10 +2,10 @@
 // goodput numbers under realistic concurrency against a real vLLM server.
 //
 // Scenarios run sequentially via startTime so results don't interfere:
-//   1. warmup       — 3 iters, 1 VU, primes prefix cache
-//   2. concurrency  — 1 -> 4 -> 16 VU constant-arrival sweeps
-//   3. poisson      — constant-arrival-rate 6 rps, 30s
-//   4. long_gen     — 4 VUs, 512 max_tokens, exercises long ITL streams
+//   1. warmup:       3 iters, 1 VU, primes prefix cache
+//   2. concurrency:  1 -> 4 -> 16 VU constant-arrival sweeps
+//   3. poisson:      constant-arrival-rate 6 rps, 30s
+//   4. long_gen:     4 VUs, 512 max_tokens, exercises long ITL streams
 //
 // Run:
 //   ./build/k6 run test/heavy.js \

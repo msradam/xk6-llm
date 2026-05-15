@@ -4,11 +4,11 @@ A k6 extension for benchmarking OpenAI-compatible chat-completions servers. Stre
 
 ![xk6-llm Grafana dashboard](./quickstart/img/dashboard.png)
 
-*1,470 requests, 0 errors, 100% goodput, $0.382 total cost. Three-turn conversations against `ibm-granite/granite-4.1-30b` on a single NVIDIA B300 SXM6. The "TTFT by turn" panel shows the prefix-cache speedup live; the cost and energy panels populate from server-reported token counts.*
+*1,470 requests, 0 errors, 100% goodput, $0.382 total cost. Three-turn conversations against `ibm-granite/granite-4.1-30b` on a single NVIDIA B300 SXM6. The "TTFT by turn" panel surfaces prefix-cache speedup across turns; the cost and energy panels are derived from server-reported token counts.*
 
 ![xk6-llm demo](./quickstart/img/demo.gif)
 
-*Live recording against Ollama on an M3 MacBook Air. The framework is the same end to end: the script, the dashboard, the metric set work identically whether you point at your laptop, a hosted API, or a vLLM cluster on H100s. Only the numbers change.*
+*Recorded against Ollama on an M3 MacBook Air. The same script and dashboard work against a hosted API or a vLLM cluster; only the numbers change.*
 
 ## Build
 
@@ -39,7 +39,7 @@ export default async function () {
 ```
 
 ```bash
-./build/k6 run script.js
+./build/k6 run examples/chat.js
 ```
 
 ## Metrics
