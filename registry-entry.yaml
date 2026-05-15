@@ -1,0 +1,13 @@
+# Entry to append to grafana/k6-extension-registry/registry.yaml when submitting.
+# After tagging v0.1.0 and pushing to GitHub, fork the registry repo, append the
+# block below, and run `k6registry -q --lint registry.yaml` before opening a PR.
+#
+# The GitHub repo must have the `xk6` topic added (Settings, About, Topics)
+# before the registry will accept the entry.
+
+- module: github.com/msradam/xk6-llm
+  description: LLM-aware load testing for k6. TTFT, ITL, TPOT, goodput, and token-throughput metrics for any OpenAI-compatible chat-completions server.
+  imports:
+    - k6/x/llm
+  versions:
+    - "v0.1.0"
