@@ -2,6 +2,8 @@
 
 A k6 extension for benchmarking OpenAI-compatible chat-completions servers. Streaming-first. Emits TTFT, ITL, TPOT, goodput, and token-throughput metrics; per-chunk timing matches `vllm bench serve` semantics.
 
+![xk6-llm Grafana dashboard](./quickstart/img/dashboard.png)
+
 ## Build
 
 ```bash
@@ -127,7 +129,7 @@ Cross-validated against `vllm bench serve` on a real vLLM 0.21.0 server (Qwen2.5
 
 ## Attribution
 
-This codebase was developed with assistance from [Claude Code](https://claude.com/claude-code). See [`CLAUDE.md`](./CLAUDE.md) and [`RESEARCH.md`](./RESEARCH.md) for the working notes and metric-definition citations. PRs are reviewed and merged by humans.
+This codebase was developed with assistance from [Claude Code](https://claude.com/claude-code). PRs are reviewed and merged by humans.
 
 ## License
 

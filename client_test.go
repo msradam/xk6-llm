@@ -155,7 +155,7 @@ func TestParseStream_SingleContentChunk_NoITL(t *testing.T) {
 func TestParseStream_MultiTokenChunk(t *testing.T) {
 	t.Parallel()
 	// Simulates TGI or batched configurations where one SSE chunk carries multiple tokens.
-	// Counted as one ITL sample boundary regardless. See RESEARCH.md §A.7.
+	// Counted as one ITL sample boundary regardless.
 	srv := sseServer(t, 5*time.Millisecond, []string{
 		contentChunk("Hello world "),
 		contentChunk("how are you?"),

@@ -8,7 +8,7 @@ cd xk6-llm
 make check   # fmt, vet, mod-tidy-verify, lint, security, test, xk6 build
 ```
 
-The full check runs `gofumpt`, `goimports`, `go vet`, `go mod tidy -diff`, `golangci-lint` (v2.7.1), `gosec`, `govulncheck`, `go test -race`, and `xk6 build`. Individual targets exist (`make test`, `make lint`, `make build-verify`). See [CLAUDE.md](./CLAUDE.md) for the full runbook.
+The full check runs `gofumpt`, `goimports`, `go vet`, `go mod tidy -diff`, `golangci-lint` (v2.7.1), `gosec`, `govulncheck`, `go test -race`, and `xk6 build`. Individual targets exist (`make test`, `make lint`, `make build-verify`).
 
 ### One-time tool install
 

@@ -11,9 +11,6 @@ import (
 // llmMetrics is the registered metric set. Names are stable; consumers may
 // build alerts/dashboards on them.
 //
-// See RESEARCH.md §A.10 (goodput) and §A.11 (chunk_latency vs tpot) for
-// definitions and rationale. Brief table for reference:
-//
 //	llm_requests           Counter           successful chat completions
 //	llm_errors             Counter           failures (tag error_type)
 //	llm_request_duration   Trend, Time       end-to-end wall time

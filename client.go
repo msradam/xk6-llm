@@ -1,7 +1,6 @@
 // Package llm registers `k6/x/llm`, a k6 extension for LLM-aware load
 // testing. See the project README for the metric set and per-request
-// semantics; see RESEARCH.md for the upstream definitions each metric
-// matches.
+// semantics.
 package llm
 
 import (
@@ -131,7 +130,6 @@ type chatResult struct {
 //
 // TPOT (matches AIPerf/genai-perf/MLPerf "TPOT", which is what those tools confusingly
 // call ITL): (e2el - ttft) / (output_tokens - 1). Requires output_tokens > 1.
-// See RESEARCH.md §A.11.
 func (r *chatResult) TPOTDerivable() bool {
 	return r.CompletionTokens > 1 && r.TTFT > 0 && r.Duration > r.TTFT
 }
@@ -356,7 +354,6 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 //     sample is t[chunk2] - t[chunk1], NOT t[chunk1] - start.
 //   - res.Chunks counts content-bearing chunks. When res.Chunks < CompletionTokens,
 //     the server is emitting multi-token chunks (TGI batched mode, spec-dec).
-//     See RESEARCH.md §A.11.
 func parseStream(r io.Reader, start time.Time) (*chatResult, error) {
 	res := &chatResult{}
 	var buf strings.Builder

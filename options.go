@@ -61,7 +61,7 @@ func (c *CostModel) USD(promptTokens, completionTokens int) float64 {
 // Coefficients must be measured for your (GPU, model, batch regime) tuple.
 // Under concurrent load the static term over-attributes idle power; divide
 // idle_w by your expected per-VU concurrency for wall-plug accuracy. This is
-// a budgeting metric, not a measurement; see RESEARCH.md.
+// a budgeting metric, not a measurement.
 type EnergyModel struct {
 	JPerInputToken  float64
 	JPerOutputToken float64
@@ -88,7 +88,7 @@ func (e *EnergyModel) Joules(promptTokens, completionTokens int, duration time.D
 // attainment Rates. A zero field disables that SLO (it always passes).
 //
 // Semantics match vLLM's `--goodput ttft:X tpot:Y e2el:Z` flag (PR #9338,
-// shipped v0.6.4). See RESEARCH.md §A.10.
+// shipped v0.6.4).
 type SLOPredicate struct {
 	TTFTMs float64
 	TPOTMs float64

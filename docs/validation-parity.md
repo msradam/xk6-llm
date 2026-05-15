@@ -12,7 +12,7 @@ Same idle vLLM 0.21.0 server (Qwen2.5-72B-Instruct-AWQ, A100 80GB PCIe, RunPod) 
 | max_tokens | 128 (`ignore_eos=true`) |
 | seed | 42 |
 
-xk6-llm replays `data/sample-prompts.jsonl` (real prompts, ~41 input tokens/req). vllm bench uses `--dataset-name random --random-input-len 64`. Tolerances from [RESEARCH.md §A.8](../RESEARCH.md): TTFT mean within 5 ms or 2%, ITL mean within 0.5 ms or 5%.
+xk6-llm replays `data/sample-prompts.jsonl` (real prompts, ~41 input tokens/req). vllm bench uses `--dataset-name random --random-input-len 64`. Reference tolerances: TTFT mean within 5 ms or 2%, ITL mean within 0.5 ms or 5%.
 
 ## Results
 
@@ -38,7 +38,7 @@ If both tools sent identical prompts, mean TTFT would agree within the 2% tolera
 
 ## TPOT / ITL / E2EL
 
-Once a request enters the decoding loop, only the server's emit rate matters; both tools see it identically. The +104 ms E2EL bias on xk6 traces to the RunPod HTTPS proxy adding ~50 ms per request relative to vllm bench's aiohttp client; xk6's `llm_response_headers` p50 of 51.56 ms is consistent.
+Once a request enters the decoding loop, only the server's emit rate matters; both tools see it identically. The +104 ms E2EL bias on xk6 traces to the RunPod HTTPS proxy adding around 50 ms per request relative to vllm bench's aiohttp client; xk6's `llm_response_headers` p50 of 51.56 ms is consistent.
 
 ## Proxy concurrency note
 

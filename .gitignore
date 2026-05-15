@@ -5,3 +5,5 @@ coverage.txt
 .DS_Store
 node_modules/
 .claude/
+CLAUDE.md
+RESEARCH.md
