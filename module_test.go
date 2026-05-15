@@ -1,7 +1,9 @@
 package llm
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,19 +26,24 @@ func Test_module_registers(t *testing.T) {
 func Test_module_dataset_roundtrip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	p := dir + "/ds.jsonl"
+	p := filepath.Join(dir, "ds.jsonl")
 	require.NoError(t, os.WriteFile(p,
 		[]byte(`{"messages":[{"role":"user","content":"a"}],"max_tokens":10}`+"\n"+
 			`{"messages":[{"role":"user","content":"b"}],"max_tokens":20}`+"\n"),
 		0o600))
 
+	// JSON-encode the path so Windows backslashes are properly escaped when
+	// embedded in the JS string literal below.
+	jsPath, err := json.Marshal(p)
+	require.NoError(t, err)
+
 	rt := modulestest.NewRuntime(t)
 	require.NoError(t, rt.SetupModuleSystem(
 		map[string]any{importPath: new(rootModule)}, nil, nil,
 	))
-	_, err := rt.RunOnEventLoop(`
+	_, err = rt.RunOnEventLoop(`
 		let llm = require("` + importPath + `");
-		let ds = new llm.Dataset({ path: "` + p + `" });
+		let ds = new llm.Dataset({ path: ` + string(jsPath) + ` });
 		if (ds.size() !== 2) throw "size: " + ds.size();
 		let r = ds.next();
 		if (r.messages[0].content !== "a") throw "first: " + r.messages[0].content;
