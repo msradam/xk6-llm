@@ -1,6 +1,6 @@
 # xk6-llm
 
-A k6 extension for benchmarking OpenAI-compatible chat-completions servers. Streaming-first. Emits TTFT, ITL, TPOT, goodput, and token-throughput metrics; per-chunk timing matches `vllm bench serve` semantics.
+A k6 extension for load-testing LLM inference servers. Streaming TTFT/ITL/TPOT, goodput, cost, and energy metrics for any OpenAI-compatible server.
 
 ![xk6-llm Grafana dashboard](./quickstart/img/dashboard.png)
 
