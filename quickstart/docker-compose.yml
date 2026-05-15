@@ -1,0 +1,42 @@
+# xk6-llm quickstart: 60-second LLM benchmark stack.
+#
+# Brings up Prometheus + Grafana with a pre-provisioned xk6-llm dashboard.
+# Then run k6 against it (from the host) with:
+#
+#   ./build/k6 run -o experimental-prometheus-rw=http://localhost:9090/api/v1/write \
+#     -e LLM_BASE_URL=http://host.docker.internal:11434/v1 \
+#     -e LLM_MODEL=granite4.1:3b \
+#     examples/chat.js
+#
+# Open http://localhost:3000 (admin/admin) → Dashboards → xk6-llm.
+services:
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: xk6-llm-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+      - --enable-feature=native-histograms
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: xk6-llm-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+    volumes:
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped

@@ -319,6 +319,9 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 	if c.cfg.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	}
+	for k, v := range c.cfg.Headers {
+		httpReq.Header.Set(k, v)
+	}
 
 	start := time.Now()
 	resp, err := c.http.Do(httpReq)

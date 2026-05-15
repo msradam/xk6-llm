@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+# k6 ships metrics into Prometheus via remote_write
+# (--out experimental-prometheus-rw=http://localhost:9090/api/v1/write).
+# No scrape jobs are needed for k6 itself; add your inference server's
+# /metrics endpoint here if you want to correlate server-side counters.
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Uncomment when running vLLM locally on the host (default port 8000):
+  # - job_name: vllm
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ["host.docker.internal:8000"]

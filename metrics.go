@@ -43,6 +43,9 @@ type llmMetrics struct {
 	SLOTTFT          *metrics.Metric
 	SLOTPOT          *metrics.Metric
 	SLOE2EL          *metrics.Metric
+	EnergyJ          *metrics.Metric
+	EnergyJPerToken  *metrics.Metric
+	CostUSD          *metrics.Metric
 }
 
 func registerMetrics(vu modules.VU) (llmMetrics, error) {
@@ -69,6 +72,9 @@ func registerMetrics(vu modules.VU) (llmMetrics, error) {
 		{"llm_slo_ttft", metrics.Rate, metrics.Default, &m.SLOTTFT},
 		{"llm_slo_tpot", metrics.Rate, metrics.Default, &m.SLOTPOT},
 		{"llm_slo_e2el", metrics.Rate, metrics.Default, &m.SLOE2EL},
+		{"llm_energy_j", metrics.Trend, metrics.Default, &m.EnergyJ},
+		{"llm_energy_j_per_token", metrics.Trend, metrics.Default, &m.EnergyJPerToken},
+		{"llm_cost_usd", metrics.Trend, metrics.Default, &m.CostUSD},
 	}
 	for _, s := range specs {
 		metric, err := r.NewMetric(s.name, s.typ, s.val)
@@ -182,6 +188,33 @@ func (c *Client) emit(ctx context.Context, model string, r *chatResult, extraTag
 			ok = ok && pass
 		}
 		samples = append(samples, boolSample(now, mx.Goodput, tags, ctm.Metadata, ok))
+	}
+
+	if cm := c.cfg.Cost; !cm.Empty() {
+		samples = append(samples, metrics.Sample{
+			Time:       now,
+			TimeSeries: metrics.TimeSeries{Metric: mx.CostUSD, Tags: tags},
+			Value:      cm.USD(r.PromptTokens, r.CompletionTokens),
+			Metadata:   ctm.Metadata,
+		})
+	}
+
+	if em := c.cfg.Energy; !em.Empty() {
+		total := em.Joules(r.PromptTokens, r.CompletionTokens, r.Duration)
+		samples = append(samples, metrics.Sample{
+			Time:       now,
+			TimeSeries: metrics.TimeSeries{Metric: mx.EnergyJ, Tags: tags},
+			Value:      total,
+			Metadata:   ctm.Metadata,
+		})
+		if r.CompletionTokens > 0 {
+			samples = append(samples, metrics.Sample{
+				Time:       now,
+				TimeSeries: metrics.TimeSeries{Metric: mx.EnergyJPerToken, Tags: tags},
+				Value:      total / float64(r.CompletionTokens),
+				Metadata:   ctm.Metadata,
+			})
+		}
 	}
 
 	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{Samples: samples})

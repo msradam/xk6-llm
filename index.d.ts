@@ -8,14 +8,36 @@ declare module 'k6/x/llm' {
     e2el_ms?: number;
   }
 
+  export interface CostModel {
+    /** Hosted-API pricing in USD per million prompt tokens. */
+    usd_per_million_input_tokens?: number;
+    /** Hosted-API pricing in USD per million generated tokens. */
+    usd_per_million_output_tokens?: number;
+  }
+
+  export interface EnergyModel {
+    /** Joules per prompt token. Calibrate per (GPU, model). */
+    j_per_input_token?: number;
+    /** Joules per generated token. Calibrate per (GPU, model). */
+    j_per_output_token?: number;
+    /** Idle GPU power in watts. Under concurrent load divide by expected per-VU concurrency. */
+    idle_w?: number;
+  }
+
   export interface ClientOptions {
     base_url?: string;
     api_key?: string;
     model?: string;
     timeout_ms?: number;
     ignore_eos?: boolean;
+    /** Extra HTTP headers sent on every request (gateways, custom auth, tracing). */
+    headers?: Record<string, string>;
     /** Default SLO applied to every chat() call that does not override it. */
     slo?: SLOPredicate;
+    /** When set, emits llm_energy_j and llm_energy_j_per_token per request. */
+    energy?: EnergyModel;
+    /** When set, emits llm_cost_usd per request. */
+    cost?: CostModel;
   }
 
   export interface ChatMessage {
@@ -63,6 +85,32 @@ declare module 'k6/x/llm' {
     chat(req: ChatRequest): Promise<ChatResult>;
   }
 
-  const _default: { Client: typeof Client };
+  export interface DatasetOptions {
+    /** Path to a JSONL file. Each line: `{"messages": [...], "max_tokens"?: N, ...}`. */
+    path: string;
+    /** Seed for the shuffle permutation. Defaults to 42. */
+    seed?: number;
+    /** When true, the load order is a deterministic seeded permutation. */
+    shuffle?: boolean;
+  }
+
+  /**
+   * Replayable corpus of chat requests. Loaded once per process and shared
+   * across VUs by absolute path; each instance carries its own cursor and
+   * shuffle permutation.
+   */
+  export class Dataset {
+    constructor(opts: DatasetOptions);
+    /** Number of items in the dataset. */
+    size(): number;
+    /** Advance the internal cursor; returns the next request, wrapping at end. */
+    next(): ChatRequest;
+    /** Direct index lookup (modulo size, negative-safe). Does not advance the cursor. */
+    at(i: number): ChatRequest;
+    /** Rewind the internal cursor. */
+    reset(): void;
+  }
+
+  const _default: { Client: typeof Client; Dataset: typeof Dataset };
   export default _default;
 }

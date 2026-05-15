@@ -1,0 +1,20 @@
+{"messages":[{"role":"user","content":"Explain the difference between TCP and UDP in two sentences."}],"max_tokens":128}
+{"messages":[{"role":"user","content":"Write a Python function that returns the n-th Fibonacci number using memoization."}],"max_tokens":256}
+{"messages":[{"role":"user","content":"Summarize the plot of Hamlet in 100 words."}],"max_tokens":160}
+{"messages":[{"role":"user","content":"What is the time complexity of mergesort and why?"}],"max_tokens":96}
+{"messages":[{"role":"user","content":"Translate to French: 'The library is closed on Sundays.'"}],"max_tokens":48}
+{"messages":[{"role":"user","content":"Compare Postgres and MySQL for OLTP workloads in 3 bullet points."}],"max_tokens":192}
+{"messages":[{"role":"user","content":"Write a haiku about distributed systems."}],"max_tokens":64}
+{"messages":[{"role":"user","content":"Describe the role of a Kafka consumer group in one paragraph."}],"max_tokens":128}
+{"messages":[{"role":"user","content":"Give a SQL query that returns the top 5 customers by total order value."}],"max_tokens":160}
+{"messages":[{"role":"user","content":"Explain CAP theorem with a real-world example."}],"max_tokens":192}
+{"messages":[{"role":"user","content":"What does 'eventually consistent' mean? Give one example."}],"max_tokens":128}
+{"messages":[{"role":"user","content":"Outline how HTTPS handshake works in 4 steps."}],"max_tokens":160}
+{"messages":[{"role":"user","content":"Why use a write-ahead log? Two sentences."}],"max_tokens":80}
+{"messages":[{"role":"user","content":"What is the difference between a process and a thread?"}],"max_tokens":128}
+{"messages":[{"role":"user","content":"Describe how Raft elects a leader in plain language."}],"max_tokens":192}
+{"messages":[{"role":"user","content":"Explain why GIL exists in CPython."}],"max_tokens":128}
+{"messages":[{"role":"user","content":"What is a B-tree and where is it used in databases?"}],"max_tokens":160}
+{"messages":[{"role":"user","content":"Write a regex that matches valid IPv4 addresses."}],"max_tokens":128}
+{"messages":[{"role":"user","content":"Briefly: what is server-sent events vs websockets?"}],"max_tokens":128}
+{"messages":[{"role":"user","content":"List 5 differences between Go channels and Rust channels."}],"max_tokens":256}

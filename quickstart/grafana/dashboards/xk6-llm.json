@@ -1,0 +1,214 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Inference-server load testing with xk6-llm. TTFT, ITL, TPOT, goodput, throughput, energy, and cost — all per-model.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "xk6-llm on GitHub",
+      "url": "https://github.com/msradam/xk6-llm",
+      "type": "link",
+      "icon": "external link",
+      "targetBlank": true
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Headline",
+      "id": 100,
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Requests",
+      "id": 1,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "area", "colorMode": "value" },
+      "targets": [{ "expr": "sum(k6_llm_requests_total)", "legendFormat": "requests", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Errors",
+      "id": 2,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }, "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [{ "expr": "sum(k6_llm_errors_total) or vector(0)", "legendFormat": "errors", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Goodput",
+      "id": 3,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 0.9 }, { "color": "green", "value": 0.99 }] }, "unit": "percentunit", "min": 0, "max": 1 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "expr": "avg(k6_llm_goodput_rate)", "legendFormat": "goodput", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Cost (USD total)",
+      "id": 4,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "currencyUSD", "decimals": 4 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "expr": "sum(k6_llm_cost_usd_sum)", "legendFormat": "USD", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Output throughput",
+      "id": 5,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "none", "decimals": 1 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value_and_name" },
+      "targets": [{ "expr": "sum(rate(k6_llm_completion_tokens_total[30s]))", "legendFormat": "tok/s", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Request rate",
+      "id": 6,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "reqps", "decimals": 2 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "expr": "sum(rate(k6_llm_requests_total[30s]))", "legendFormat": "req/s", "refId": "A" }]
+    },
+
+    {
+      "type": "row",
+      "title": "Latency",
+      "id": 101,
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+    {
+      "type": "timeseries",
+      "title": "TTFT (time to first token)",
+      "id": 10,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "lineInterpolation": "smooth", "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "k6_llm_ttft_p50", "legendFormat": "p50 {{model}}", "refId": "A" },
+        { "expr": "k6_llm_ttft_p95", "legendFormat": "p95 {{model}}", "refId": "B" },
+        { "expr": "k6_llm_ttft_p99", "legendFormat": "p99 {{model}}", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "TPOT & ITL (decoding speed)",
+      "id": 11,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "lineInterpolation": "smooth", "fillOpacity": 5 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "k6_llm_tpot_p50", "legendFormat": "TPOT p50 {{model}}", "refId": "A" },
+        { "expr": "k6_llm_tpot_p95", "legendFormat": "TPOT p95 {{model}}", "refId": "B" },
+        { "expr": "k6_llm_itl_p95", "legendFormat": "ITL p95 {{model}}", "refId": "C" }
+      ]
+    },
+
+    {
+      "type": "row",
+      "title": "SLO attainment",
+      "id": 102,
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Per-SLO attainment (Rate metrics)",
+      "id": 20,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "lineInterpolation": "stepAfter", "fillOpacity": 20 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "k6_llm_slo_ttft_rate", "legendFormat": "ttft {{model}}", "refId": "A" },
+        { "expr": "k6_llm_slo_tpot_rate", "legendFormat": "tpot {{model}}", "refId": "B" },
+        { "expr": "k6_llm_slo_e2el_rate", "legendFormat": "e2el {{model}}", "refId": "C" },
+        { "expr": "k6_llm_goodput_rate",  "legendFormat": "goodput {{model}}", "refId": "D" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors by type",
+      "id": 21,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "stacking": { "mode": "normal" }, "fillOpacity": 80 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "sum by (error_type) (rate(k6_llm_errors_total[30s]))", "legendFormat": "{{error_type}}", "refId": "A" }]
+    },
+
+    {
+      "type": "row",
+      "title": "Cost & energy",
+      "id": 103,
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost per request (USD)",
+      "id": 30,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 6, "custom": { "lineInterpolation": "smooth", "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "k6_llm_cost_usd_avg", "legendFormat": "mean {{model}}", "refId": "A" },
+        { "expr": "k6_llm_cost_usd_p95", "legendFormat": "p95 {{model}}", "refId": "B" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Energy per request (J) and per token",
+      "id": 31,
+      "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "joule", "custom": { "lineInterpolation": "smooth", "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "k6_llm_energy_j_avg", "legendFormat": "J/req mean {{model}}", "refId": "A" },
+        { "expr": "k6_llm_energy_j_per_token_avg", "legendFormat": "J/token mean {{model}}", "refId": "B" }
+      ]
+    }
+  ],
+  "preload": false,
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["xk6-llm", "llm", "inference"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "xk6-llm — Inference benchmark",
+  "uid": "xk6-llm",
+  "version": 1,
+  "weekStart": ""
+}

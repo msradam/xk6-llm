@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,7 +12,43 @@ func Test_module_registers(t *testing.T) {
 	t.Parallel()
 	rt := modulestest.NewRuntime(t)
 	require.NoError(t, rt.SetupModuleSystem(
-		map[string]any{importPath: new(rootModule)}, nil, nil))
-	_, err := rt.RunOnEventLoop(`let llm = require("` + importPath + `"); if (typeof llm.Client !== "function") throw "no Client";`)
+		map[string]any{importPath: new(rootModule)}, nil, nil,
+	))
+	_, err := rt.RunOnEventLoop(`let llm = require("` + importPath + `");
+		if (typeof llm.Client !== "function") throw "no Client";
+		if (typeof llm.Dataset !== "function") throw "no Dataset";
+	`)
+	require.NoError(t, err)
+}
+
+func Test_module_dataset_roundtrip(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p := dir + "/ds.jsonl"
+	require.NoError(t, os.WriteFile(p,
+		[]byte(`{"messages":[{"role":"user","content":"a"}],"max_tokens":10}`+"\n"+
+			`{"messages":[{"role":"user","content":"b"}],"max_tokens":20}`+"\n"),
+		0o600))
+
+	rt := modulestest.NewRuntime(t)
+	require.NoError(t, rt.SetupModuleSystem(
+		map[string]any{importPath: new(rootModule)}, nil, nil,
+	))
+	_, err := rt.RunOnEventLoop(`
+		let llm = require("` + importPath + `");
+		let ds = new llm.Dataset({ path: "` + p + `" });
+		if (ds.size() !== 2) throw "size: " + ds.size();
+		let r = ds.next();
+		if (r.messages[0].content !== "a") throw "first: " + r.messages[0].content;
+		if (r.max_tokens !== 10) throw "max_tokens: " + r.max_tokens;
+		let r2 = ds.next();
+		if (r2.messages[0].content !== "b") throw "second: " + r2.messages[0].content;
+		// at() does not advance the cursor
+		let r3 = ds.at(0);
+		if (r3.messages[0].content !== "a") throw "at(0): " + r3.messages[0].content;
+		ds.reset();
+		let r4 = ds.next();
+		if (r4.messages[0].content !== "a") throw "reset: " + r4.messages[0].content;
+	`)
 	require.NoError(t, err)
 }

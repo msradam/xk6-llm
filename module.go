@@ -23,7 +23,8 @@ type module struct {
 func (m *module) Exports() modules.Exports {
 	return modules.Exports{
 		Named: map[string]any{
-			"Client": m.newClient,
+			"Client":  m.newClient,
+			"Dataset": m.newDataset,
 		},
 	}
 }
