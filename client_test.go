@@ -148,8 +148,11 @@ func TestParseStream_SingleContentChunk_NoITL(t *testing.T) {
 	res, err := parseStream(resp.Body, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, "only", res.Content)
-	require.Empty(t, res.ITL, "one content chunk → zero ITL samples")
-	require.Greater(t, res.TTFT, time.Duration(0))
+	require.Empty(t, res.ITL, "one content chunk produces zero ITL samples")
+	// TTFT is set whenever a content chunk arrives. The numeric value may be
+	// zero on systems whose clock resolution can't separate two back-to-back
+	// time.Now() calls (notably the windows-latest CI runner).
+	require.GreaterOrEqual(t, res.TTFT, time.Duration(0))
 }
 
 func TestParseStream_MultiTokenChunk(t *testing.T) {
