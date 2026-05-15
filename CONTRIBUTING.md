@@ -8,18 +8,15 @@ cd xk6-llm
 make check   # fmt, vet, mod-tidy-verify, lint, security, test, xk6 build
 ```
 
-The full check runs `gofumpt`, `goimports`, `go vet`, `go mod tidy -diff`, `golangci-lint` (v2.7.1), `gosec`, `govulncheck`, `go test -race`, and `xk6 build`. Individual targets exist (`make test`, `make lint`, `make build-verify`).
+The full check runs `gofumpt`, `goimports`, `go vet`, `go mod tidy`, `golangci-lint` (v2.7.1), `gosec`, `go test -race`, and `xk6 build`. Individual targets exist (`make test`, `make lint`, `make build-verify`). `make vuln` runs `govulncheck` separately because it can flag advisories tied to the local Go toolchain version that the CI matrix does not see.
 
 ### One-time tool install
 
 ```bash
-go install mvdan.cc/gofumpt@latest
-go install golang.org/x/tools/cmd/goimports@latest
-go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.1
-go install github.com/securego/gosec/v2/cmd/gosec@latest
-go install golang.org/x/vuln/cmd/govulncheck@latest
-go install go.k6.io/xk6/cmd/xk6@v1.4.1
+make tools
 ```
+
+This installs `gofumpt`, `goimports`, `golangci-lint` (v2.7.1), `gosec`, `govulncheck`, and `xk6` (v1.4.1) into `$GOPATH/bin`.
 
 ### Iterating
 
