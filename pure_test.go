@@ -1,0 +1,86 @@
+package llm
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+// Pure-function tests covering helpers that don't need a k6 VU runtime.
+
+func TestChatError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
+	inner := errors.New("upstream down")
+	ce := newChatError(errKindNetwork, inner)
+	require.Equal(t, "upstream down", ce.Error())
+	require.Same(t, inner, errors.Unwrap(ce))
+	require.Equal(t, errKindNetwork, errorKind(ce))
+	require.Equal(t, errKindNetwork, errorKind(inner)) // fallback when not a chatError
+}
+
+func TestChatRequest_TagSet(t *testing.T) {
+	t.Parallel()
+	t.Run("nil when empty", func(t *testing.T) {
+		t.Parallel()
+		p := &chatRequest{}
+		require.Nil(t, p.tagSet())
+	})
+	t.Run("cache_state only", func(t *testing.T) {
+		t.Parallel()
+		p := &chatRequest{cacheState: "warm"}
+		require.Equal(t, map[string]string{"cache_state": "warm"}, p.tagSet())
+	})
+	t.Run("user tags only", func(t *testing.T) {
+		t.Parallel()
+		p := &chatRequest{tags: map[string]string{"region": "us-east"}}
+		require.Equal(t, map[string]string{"region": "us-east"}, p.tagSet())
+	})
+	t.Run("merge", func(t *testing.T) {
+		t.Parallel()
+		p := &chatRequest{cacheState: "cold", tags: map[string]string{"shape": "short"}}
+		got := p.tagSet()
+		require.Equal(t, "cold", got["cache_state"])
+		require.Equal(t, "short", got["shape"])
+		require.Len(t, got, 2)
+	})
+}
+
+func TestChatResult_ToJSObject(t *testing.T) {
+	t.Parallel()
+	r := &chatResult{
+		Content:          "hello",
+		TTFT:             50 * time.Millisecond,
+		ITL:              []time.Duration{10 * time.Millisecond, 12 * time.Millisecond},
+		Duration:         200 * time.Millisecond,
+		ResponseHeaders:  20 * time.Millisecond,
+		Chunks:           3,
+		PromptTokens:     8,
+		CompletionTokens: 4,
+		FinishReason:     "stop",
+	}
+	m := r.toJSObject()
+	require.Equal(t, "hello", m["content"])
+	require.InDelta(t, 50.0, m["ttft_ms"].(float64), 1e-6)
+	itl := m["itl_ms"].([]float64)
+	require.Len(t, itl, 2)
+	require.InDelta(t, 10.0, itl[0], 1e-6)
+	require.InDelta(t, 12.0, itl[1], 1e-6)
+	require.InDelta(t, 200.0, m["duration_ms"].(float64), 1e-6)
+	require.InDelta(t, 20.0, m["response_headers_ms"].(float64), 1e-6)
+	require.Equal(t, 3, m["chunks"])
+	require.Equal(t, 8, m["prompt_tokens"])
+	require.Equal(t, 4, m["completion_tokens"])
+	require.Equal(t, "stop", m["finish_reason"])
+	// TPOT = (200 - 50) / (4 - 1) = 50ms
+	require.InDelta(t, 50.0, m["tpot_ms"].(float64), 1e-6)
+}
+
+func TestChatResult_ToJSObject_NotDerivableTPOT(t *testing.T) {
+	t.Parallel()
+	r := &chatResult{Content: "x", Duration: 10 * time.Millisecond, CompletionTokens: 1}
+	m := r.toJSObject()
+	// Single token cannot yield TPOT; result should still expose the field as 0.
+	require.InDelta(t, 0.0, m["tpot_ms"].(float64), 1e-9)
+}
