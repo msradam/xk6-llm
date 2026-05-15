@@ -1,0 +1,7 @@
+# Configuration for zizmor (https://github.com/woodruffw/zizmor),
+# a static analyzer for GitHub Actions workflows.
+#
+# Empty config means "use defaults". Keep this file so contributors and
+# CI know zizmor is the expected linter for .github/workflows/.
+
+rules: {}
