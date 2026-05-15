@@ -1,3 +1,7 @@
+// Package llm registers `k6/x/llm`, a k6 extension for LLM-aware load
+// testing. See the project README for the metric set and per-request
+// semantics; see RESEARCH.md for the upstream definitions each metric
+// matches.
 package llm
 
 import (
@@ -8,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -109,6 +114,101 @@ var controlKeys = map[string]bool{
 	"tags":        true,
 }
 
+type chatResult struct {
+	Content          string
+	TTFT             time.Duration
+	ITL              []time.Duration
+	Duration         time.Duration
+	ResponseHeaders  time.Duration
+	Chunks           int
+	PromptTokens     int
+	CompletionTokens int
+	FinishReason     string
+	SLO              *SLOPredicate // copied from request; used by emit() to decide which Rates to push
+}
+
+// TPOTDerivable reports whether TPOT can be computed.
+//
+// TPOT (matches AIPerf/genai-perf/MLPerf "TPOT", which is what those tools confusingly
+// call ITL): (e2el - ttft) / (output_tokens - 1). Requires output_tokens > 1.
+// See RESEARCH.md §A.11.
+func (r *chatResult) TPOTDerivable() bool {
+	return r.CompletionTokens > 1 && r.TTFT > 0 && r.Duration > r.TTFT
+}
+
+// TPOT returns the scalar inter-token time. Caller should check TPOTDerivable first.
+func (r *chatResult) TPOT() time.Duration {
+	if !r.TPOTDerivable() {
+		return 0
+	}
+	return (r.Duration - r.TTFT) / time.Duration(r.CompletionTokens-1)
+}
+
+func (r *chatResult) toJSObject() map[string]any {
+	itlMs := make([]float64, len(r.ITL))
+	for i, d := range r.ITL {
+		itlMs[i] = float64(d) / float64(time.Millisecond)
+	}
+	out := map[string]any{
+		"content":             r.Content,
+		"ttft_ms":             float64(r.TTFT) / float64(time.Millisecond),
+		"itl_ms":              itlMs,
+		"duration_ms":         float64(r.Duration) / float64(time.Millisecond),
+		"response_headers_ms": float64(r.ResponseHeaders) / float64(time.Millisecond),
+		"chunks":              r.Chunks,
+		"prompt_tokens":       r.PromptTokens,
+		"completion_tokens":   r.CompletionTokens,
+		"finish_reason":       r.FinishReason,
+	}
+	if r.TPOTDerivable() {
+		out["tpot_ms"] = float64(r.TPOT()) / float64(time.Millisecond)
+	} else {
+		out["tpot_ms"] = 0.0
+	}
+	return out
+}
+
+// Chat sends a streaming chat completion request. Returns a Promise resolving to
+// a result object (see chatResult.toJSObject for the full shape) or rejecting
+// with the categorized error.
+//
+// JS:
+//
+//	client.chat({
+//	  messages: [...],
+//	  max_tokens: 256,
+//	  // control fields (peeled off before the upstream POST):
+//	  slo:         { ttft_ms: 500, tpot_ms: 50, e2el_ms: 5000 },
+//	  cache_state: "cold",
+//	  tags:        { region: "us-east", shape: "short" },
+//	})
+func (c *Client) Chat(req map[string]any) *sobek.Promise {
+	promise, resolve, reject := promises.New(c.mod.vu)
+	ctx := c.mod.vu.Context()
+	model := c.cfg.Model
+
+	parsed, err := c.parseChatRequest(req)
+	if err != nil {
+		// Emit an error sample so synchronous validation failures show in the run summary.
+		c.emitError(ctx, model, errKindDecode, nil)
+		reject(err)
+		return promise
+	}
+
+	go func() {
+		res, err := c.doChat(ctx, parsed)
+		if err != nil {
+			c.emitError(ctx, model, errorKind(err), parsed.tagSet())
+			reject(err)
+			return
+		}
+		res.SLO = parsed.slo
+		c.emit(ctx, model, res, parsed.tagSet())
+		resolve(res.toJSObject())
+	}()
+	return promise
+}
+
 func (c *Client) parseChatRequest(raw map[string]any) (*chatRequest, error) {
 	req := &chatRequest{
 		body: make(map[string]any, len(raw)),
@@ -152,110 +252,13 @@ func (c *Client) parseChatRequest(raw map[string]any) (*chatRequest, error) {
 	return req, nil
 }
 
-type chatResult struct {
-	Content          string
-	TTFT             time.Duration
-	ITL              []time.Duration
-	Duration         time.Duration
-	ResponseHeaders  time.Duration
-	Chunks           int
-	PromptTokens     int
-	CompletionTokens int
-	FinishReason     string
-	SLO              *SLOPredicate // copied from request; used by emit() to decide which Rates to push
-}
-
-// TPOTDerivable reports whether TPOT can be computed.
-//
-// TPOT (matches AIPerf/genai-perf/MLPerf "TPOT", which is what those tools confusingly
-// call ITL): (e2el - ttft) / (output_tokens - 1). Requires output_tokens > 1.
-// See RESEARCH.md §A.11.
-func (r *chatResult) TPOTDerivable() bool {
-	return r.CompletionTokens > 1 && r.TTFT > 0 && r.Duration > r.TTFT
-}
-
-// TPOT returns the scalar inter-token time. Caller should check TPOTDerivable first.
-func (r *chatResult) TPOT() time.Duration {
-	if !r.TPOTDerivable() {
-		return 0
-	}
-	return (r.Duration - r.TTFT) / time.Duration(r.CompletionTokens-1)
-}
-
-func (r *chatResult) toJSObject() map[string]any {
-	itlMs := make([]float64, len(r.ITL))
-	for i, d := range r.ITL {
-		itlMs[i] = float64(d) / float64(time.Millisecond)
-	}
-	out := map[string]any{
-		"content":              r.Content,
-		"ttft_ms":              float64(r.TTFT) / float64(time.Millisecond),
-		"itl_ms":               itlMs,
-		"duration_ms":          float64(r.Duration) / float64(time.Millisecond),
-		"response_headers_ms":  float64(r.ResponseHeaders) / float64(time.Millisecond),
-		"chunks":               r.Chunks,
-		"prompt_tokens":        r.PromptTokens,
-		"completion_tokens":    r.CompletionTokens,
-		"finish_reason":        r.FinishReason,
-	}
-	if r.TPOTDerivable() {
-		out["tpot_ms"] = float64(r.TPOT()) / float64(time.Millisecond)
-	} else {
-		out["tpot_ms"] = 0.0
-	}
-	return out
-}
-
-// Chat sends a streaming chat completion request. Returns a Promise resolving to
-// a result object (see chatResult.toJSObject for the full shape) or rejecting
-// with the categorized error.
-//
-// JS:
-//
-//	client.chat({
-//	  messages: [...],
-//	  max_tokens: 256,
-//	  // control fields (peeled off before the upstream POST):
-//	  slo:         { ttft_ms: 500, tpot_ms: 50, e2el_ms: 5000 },
-//	  cache_state: "cold",
-//	  tags:        { region: "us-east", shape: "short" },
-//	})
-func (c *Client) Chat(req map[string]any) *sobek.Promise {
-	promise, resolve, reject := promises.New(c.mod.vu)
-	ctx := c.mod.vu.Context()
-	model := c.cfg.Model
-
-	parsed, err := c.parseChatRequest(req)
-	if err != nil {
-		// Emit an error sample so synchronous validation failures show in the run summary.
-		c.emitError(model, errKindDecode, nil)
-		reject(err)
-		return promise
-	}
-
-	go func() {
-		res, err := c.doChat(ctx, parsed)
-		if err != nil {
-			c.emitError(model, errorKind(err), parsed.tagSet())
-			reject(err)
-			return
-		}
-		res.SLO = parsed.slo
-		c.emit(model, res, parsed.tagSet())
-		resolve(res.toJSObject())
-	}()
-	return promise
-}
-
 // tagSet returns request-scoped tags (cache_state + user tags) merged.
 func (p *chatRequest) tagSet() map[string]string {
 	if p.cacheState == "" && len(p.tags) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(p.tags)+1)
-	for k, v := range p.tags {
-		out[k] = v
-	}
+	maps.Copy(out, p.tags)
 	if p.cacheState != "" {
 		out["cache_state"] = p.cacheState
 	}
@@ -323,7 +326,7 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		return nil, newChatError(classifyTransportError(err), err)
 	}
 	headersAt := time.Now()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(resp.Body)
@@ -374,7 +377,7 @@ func parseStream(r io.Reader, start time.Time) (*chatResult, error) {
 		}
 
 		// Surface OpenAI-shaped {"error": ...} envelopes regardless of HTTP status.
-		if bytes.Contains([]byte(data), []byte(`"error"`)) {
+		if strings.Contains(data, `"error"`) {
 			var env sseErrEnvelope
 			if err := json.Unmarshal([]byte(data), &env); err == nil && env.Error.Message != "" {
 				return nil, fmt.Errorf("stream error: %s", env.Error.Message)

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"time"
 
 	"go.k6.io/k6/v2/js/modules"
@@ -80,7 +81,7 @@ func registerMetrics(vu modules.VU) (llmMetrics, error) {
 }
 
 // emit pushes the per-request metric samples for a successful chat completion.
-func (c *Client) emit(model string, r *chatResult, extraTags map[string]string) {
+func (c *Client) emit(ctx context.Context, model string, r *chatResult, extraTags map[string]string) {
 	state := c.mod.vu.State()
 	if state == nil {
 		return
@@ -91,7 +92,6 @@ func (c *Client) emit(model string, r *chatResult, extraTags map[string]string) 
 		tags = tags.With(k, v)
 	}
 	now := time.Now()
-	ctx := c.mod.vu.Context()
 	mx := c.mod.metrics
 
 	samples := []metrics.Sample{
@@ -188,7 +188,7 @@ func (c *Client) emit(model string, r *chatResult, extraTags map[string]string) 
 }
 
 // emitError pushes an error sample tagged with the categorized error_type.
-func (c *Client) emitError(model, errorType string, extraTags map[string]string) {
+func (c *Client) emitError(ctx context.Context, model, errorType string, extraTags map[string]string) {
 	state := c.mod.vu.State()
 	if state == nil {
 		return
@@ -198,7 +198,7 @@ func (c *Client) emitError(model, errorType string, extraTags map[string]string)
 	for k, v := range extraTags {
 		tags = tags.With(k, v)
 	}
-	metrics.PushIfNotDone(c.mod.vu.Context(), state.Samples, metrics.ConnectedSamples{
+	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{
 		Samples: []metrics.Sample{{
 			Time:       time.Now(),
 			TimeSeries: metrics.TimeSeries{Metric: c.mod.metrics.Errors, Tags: tags},

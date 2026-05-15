@@ -15,7 +15,7 @@ import (
 // with `gap` between consecutive writes (so ITL is measurable).
 func sseServer(t *testing.T, gap time.Duration, chunks []string) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		flusher, ok := w.(http.Flusher)
@@ -24,12 +24,24 @@ func sseServer(t *testing.T, gap time.Duration, chunks []string) *httptest.Serve
 			if i > 0 && gap > 0 {
 				time.Sleep(gap)
 			}
-			fmt.Fprintf(w, "data: %s\n\n", c)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", c)
 			flusher.Flush()
 		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// httpGet does an HTTP GET with an explicit context. Tests use this in place of
+// http.Get so noctx is satisfied.
+func httpGet(t *testing.T, url string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
 }
 
 func contentChunk(s string) string {
@@ -68,9 +80,7 @@ func TestParseStream_SkipsRoleOnlyForTTFT(t *testing.T) {
 		usageChunk(7, 3),
 		"[DONE]",
 	})
-	resp, err := http.Get(srv.URL)
-	require.NoError(t, err)
-	defer resp.Body.Close()
+	resp := httpGet(t, srv.URL)
 
 	start := time.Now()
 	res, err := parseStream(resp.Body, start)
@@ -102,9 +112,7 @@ func TestParseStream_UsageOmitted(t *testing.T) {
 		contentChunk("b"),
 		"[DONE]",
 	})
-	resp, err := http.Get(srv.URL)
-	require.NoError(t, err)
-	defer resp.Body.Close()
+	resp := httpGet(t, srv.URL)
 
 	res, err := parseStream(resp.Body, time.Now())
 	require.NoError(t, err)
@@ -121,11 +129,9 @@ func TestParseStream_MidStreamError(t *testing.T) {
 		`{"error":{"message":"upstream exploded","type":"server_error"}}`,
 		"[DONE]",
 	})
-	resp, err := http.Get(srv.URL)
-	require.NoError(t, err)
-	defer resp.Body.Close()
+	resp := httpGet(t, srv.URL)
 
-	_, err = parseStream(resp.Body, time.Now())
+	_, err := parseStream(resp.Body, time.Now())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "upstream exploded")
 }
@@ -137,9 +143,7 @@ func TestParseStream_SingleContentChunk_NoITL(t *testing.T) {
 		contentChunk("only"),
 		"[DONE]",
 	})
-	resp, err := http.Get(srv.URL)
-	require.NoError(t, err)
-	defer resp.Body.Close()
+	resp := httpGet(t, srv.URL)
 
 	res, err := parseStream(resp.Body, time.Now())
 	require.NoError(t, err)
@@ -157,9 +161,7 @@ func TestParseStream_MultiTokenChunk(t *testing.T) {
 		contentChunk("how are you?"),
 		"[DONE]",
 	})
-	resp, err := http.Get(srv.URL)
-	require.NoError(t, err)
-	defer resp.Body.Close()
+	resp := httpGet(t, srv.URL)
 
 	res, err := parseStream(resp.Body, time.Now())
 	require.NoError(t, err)
@@ -182,15 +184,13 @@ func TestITL_ClockHonesty(t *testing.T) {
 	)
 	chunks := make([]string, 0, nContent+2)
 	chunks = append(chunks, roleChunk)
-	for i := 0; i < nContent; i++ {
+	for i := range nContent {
 		chunks = append(chunks, contentChunk(fmt.Sprintf("tok%d ", i)))
 	}
 	chunks = append(chunks, "[DONE]")
 
 	srv := sseServer(t, gap, chunks)
-	resp, err := http.Get(srv.URL)
-	require.NoError(t, err)
-	defer resp.Body.Close()
+	resp := httpGet(t, srv.URL)
 
 	res, err := parseStream(resp.Body, time.Now())
 	require.NoError(t, err)
@@ -244,7 +244,6 @@ func TestParseOptions(t *testing.T) {
 		{name: "wrong type", in: "string", wantErr: true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			o, err := parseOptions(tc.in)
@@ -330,11 +329,11 @@ func TestParseChatRequest_StripsControlFields(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, "http://example")
 	req, err := c.parseChatRequest(map[string]any{
-		"messages":   []any{map[string]any{"role": "user", "content": "hi"}},
-		"max_tokens": float64(64),
-		"slo":        map[string]any{"ttft_ms": float64(500)},
+		"messages":    []any{map[string]any{"role": "user", "content": "hi"}},
+		"max_tokens":  float64(64),
+		"slo":         map[string]any{"ttft_ms": float64(500)},
 		"cache_state": "cold",
-		"tags":       map[string]any{"region": "us-east"},
+		"tags":        map[string]any{"region": "us-east"},
 	})
 	require.NoError(t, err)
 	// Control fields must NOT leak into the upstream OpenAI body.
@@ -412,7 +411,7 @@ func TestErrorClassification(t *testing.T) {
 	})
 	t.Run("timeout", func(t *testing.T) {
 		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			time.Sleep(500 * time.Millisecond)
 		}))
 		defer srv.Close()
@@ -450,9 +449,9 @@ func TestDoChat_ResponseHeadersTiming(t *testing.T) {
 		flusher, _ := w.(http.Flusher)
 		flusher.Flush()
 		time.Sleep(20 * time.Millisecond)
-		fmt.Fprintf(w, "data: %s\n\n", contentChunk("hi"))
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", contentChunk("hi"))
 		flusher.Flush()
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	}))
 	defer srv.Close()
@@ -465,4 +464,3 @@ func TestDoChat_ResponseHeadersTiming(t *testing.T) {
 	// TTFT must include the header delay + the post-header gap before first content.
 	require.GreaterOrEqual(t, res.TTFT, res.ResponseHeaders, "TTFT >= response_headers")
 }
-

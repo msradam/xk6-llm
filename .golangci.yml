@@ -2,21 +2,36 @@ version: "2"
 linters:
   default: all
   disable:
-    - gochecknoinits
-    - ireturn
-    - exhaustruct
-    - varnamelen
-    - wrapcheck
-  settings:
-    depguard:
-      rules:
-        prevent_accidental_imports:
-          allow:
-            - $gostd
-            - github.com/stretchr/testify/require
-            - go.k6.io/k6
-            - github.com/grafana/sobek
-            - github.com/msradam/xk6-llm
+    - gochecknoinits   # k6 extensions register from init()
+    - gochecknoglobals # control-key maps and error kind sentinels are intentional
+    - ireturn          # extension constructors return an interface
+    - exhaustruct      # options structs are partial
+    - varnamelen       # short stdlib-style names are fine
+    - wrapcheck        # wrapping is noisy in extensions
+    - wsl              # whitespace-style preference
+    - wsl_v5
+    - nlreturn         # newline-before-return style preference
+    - lll              # long lines, URLs in comments
+    - mnd              # magic numbers, too noisy for benchmark code
+    - err113           # prefer fmt.Errorf over sentinel error vars
+    - cyclop           # cyclomatic complexity threshold not useful here
+    - gocognit
+    - gocyclo
+    - funlen
+    - testpackage      # internal _test files are convenient
+    - thelper          # t.Helper() added selectively
+    - testifylint      # minor test-style preferences
+    - tagliatelle      # JSON tag naming matches OpenAI/SSE wire format
+    - noinlineerr      # if err := ...; err != nil is idiomatic
+    - depguard         # allow-list maintained at function level
+  settings: {}
+  exclusions:
+    rules:
+      # The httpGet test helper defers Close via t.Cleanup, which bodyclose
+      # cannot trace across function boundaries.
+      - path: _test\.go
+        linters:
+          - bodyclose
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
