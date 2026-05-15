@@ -62,19 +62,28 @@ func TestChatResult_ToJSObject(t *testing.T) {
 	}
 	m := r.toJSObject()
 	require.Equal(t, "hello", m["content"])
-	require.InDelta(t, 50.0, m["ttft_ms"].(float64), 1e-6)
-	itl := m["itl_ms"].([]float64)
+	ttft, ok := m["ttft_ms"].(float64)
+	require.True(t, ok)
+	require.InDelta(t, 50.0, ttft, 1e-6)
+	itl, ok := m["itl_ms"].([]float64)
+	require.True(t, ok)
 	require.Len(t, itl, 2)
 	require.InDelta(t, 10.0, itl[0], 1e-6)
 	require.InDelta(t, 12.0, itl[1], 1e-6)
-	require.InDelta(t, 200.0, m["duration_ms"].(float64), 1e-6)
-	require.InDelta(t, 20.0, m["response_headers_ms"].(float64), 1e-6)
+	dur, ok := m["duration_ms"].(float64)
+	require.True(t, ok)
+	require.InDelta(t, 200.0, dur, 1e-6)
+	rh, ok := m["response_headers_ms"].(float64)
+	require.True(t, ok)
+	require.InDelta(t, 20.0, rh, 1e-6)
 	require.Equal(t, 3, m["chunks"])
 	require.Equal(t, 8, m["prompt_tokens"])
 	require.Equal(t, 4, m["completion_tokens"])
 	require.Equal(t, "stop", m["finish_reason"])
 	// TPOT = (200 - 50) / (4 - 1) = 50ms
-	require.InDelta(t, 50.0, m["tpot_ms"].(float64), 1e-6)
+	tpot, ok := m["tpot_ms"].(float64)
+	require.True(t, ok)
+	require.InDelta(t, 50.0, tpot, 1e-6)
 }
 
 func TestChatResult_ToJSObject_NotDerivableTPOT(t *testing.T) {
@@ -82,5 +91,7 @@ func TestChatResult_ToJSObject_NotDerivableTPOT(t *testing.T) {
 	r := &chatResult{Content: "x", Duration: 10 * time.Millisecond, CompletionTokens: 1}
 	m := r.toJSObject()
 	// Single token cannot yield TPOT; result should still expose the field as 0.
-	require.InDelta(t, 0.0, m["tpot_ms"].(float64), 1e-9)
+	tpot, ok := m["tpot_ms"].(float64)
+	require.True(t, ok)
+	require.InDelta(t, 0.0, tpot, 1e-9)
 }
