@@ -1,51 +1,38 @@
-## vhs tape: records a polished GIF of the xk6-llm showcase run.
-## Build:  vhs quickstart/demo.tape  ->  quickstart/img/demo.gif
-##
-## Assumes a vLLM endpoint is already reachable. Set the env vars on the
-## host running vhs:  LLM_BASE_URL, LLM_MODEL.
+# vhs tape for the xk6-llm demo. Renders to quickstart/img/demo.gif.
 
 Output quickstart/img/demo.gif
 
-Set FontSize 13
+Set FontSize 14
 Set Width 1280
 Set Height 760
 Set Theme "Catppuccin Mocha"
-Set PlaybackSpeed 1.2
-Set TypingSpeed 35ms
-
-Hide
-Type "cd quickstart && docker compose up -d >/dev/null 2>&1 && cd .."
-Enter
-Sleep 2s
-Show
+Set PlaybackSpeed 1.6
+Set TypingSpeed 25ms
 
 Type "# xk6-llm: load test any OpenAI-compatible inference server"
-Sleep 800ms
+Sleep 600ms
 Enter
-Type "# emits TTFT, ITL, TPOT, goodput, cost, energy"
-Sleep 800ms
+Type "# emits TTFT, ITL, TPOT, goodput, cost, energy. ships to Grafana."
+Sleep 600ms
 Enter
 Type "clear"
 Enter
 
-Type "./build/k6 version | head -3"
+Type "./build/k6 version"
 Enter
-Sleep 2s
+Sleep 2500ms
 
-Type "# fire the showcase: ramping arrival, 3-turn sessions, cost + energy + SLOs"
-Sleep 1s
+Type "# fire showcase: 3-turn sessions, ramping arrival, cost + energy + SLOs"
+Sleep 800ms
 Enter
-Type "K6_PROMETHEUS_RW_TREND_STATS='p(50),p(95),p(99),min,max,avg,count,sum' ./build/k6 run \"
+Type 'export K6_PROMETHEUS_RW_TREND_STATS="p(50),p(95),p(99),min,max,avg,count,sum"'
 Enter
-Type "  -o experimental-prometheus-rw=http://localhost:9090/api/v1/write \"
-Enter
-Type "  -e LLM_BASE_URL=$LLM_BASE_URL -e LLM_MODEL=$LLM_MODEL \"
-Enter
-Type "  examples/showcase.js"
+Sleep 600ms
+Type "./build/k6 run -o experimental-prometheus-rw=http://localhost:9090/api/v1/write -e LLM_BASE_URL=http://localhost:11434/v1 -e LLM_MODEL=qwen2.5:0.5b examples/showcase.js"
 Enter
 
-Sleep 130s
+Sleep 140s
 
-Type "# open the dashboard:  http://localhost:3000/d/xk6-llm"
+Type "# dashboard live at http://localhost:3000/d/xk6-llm"
 Sleep 4s
 Enter

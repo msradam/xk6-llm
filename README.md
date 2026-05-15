@@ -4,6 +4,10 @@ A k6 extension for benchmarking OpenAI-compatible chat-completions servers. Stre
 
 ![xk6-llm Grafana dashboard](./quickstart/img/dashboard.png)
 
+*1,470 requests, 0 errors, 100% goodput, $0.382 total cost. Three-turn conversations against `ibm-granite/granite-4.1-30b` on a single NVIDIA B300 SXM6. The "TTFT by turn" panel shows the prefix-cache speedup live; the cost and energy panels populate from server-reported token counts.*
+
+![xk6-llm demo](./quickstart/img/demo.gif)
+
 ## Build
 
 ```bash
