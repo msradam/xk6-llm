@@ -10,7 +10,7 @@ import (
 	"go.k6.io/k6/v2/js/modulestest"
 )
 
-func Test_module_registers(t *testing.T) {
+func TestModule_Registers(t *testing.T) {
 	t.Parallel()
 	rt := modulestest.NewRuntime(t)
 	require.NoError(t, rt.SetupModuleSystem(
@@ -23,7 +23,7 @@ func Test_module_registers(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func Test_module_dataset_roundtrip(t *testing.T) {
+func TestModule_DatasetRoundtrip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "ds.jsonl")
