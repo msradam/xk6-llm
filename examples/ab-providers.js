@@ -1,7 +1,7 @@
 // A/B compare two providers on identical traffic. Two scenarios run in
 // parallel against two different Clients; every metric is tagged with
-// `provider`, so the Grafana dashboard shows them side by side and the cost
-// panel becomes a literal procurement decision.
+// `provider`, so the Grafana dashboard shows them side by side, including
+// the per-request cost panel.
 //
 // This example points at two Ollama models. Swap base_url / api_key to compare
 // OpenAI vs Anthropic vs your self-hosted vLLM, etc.

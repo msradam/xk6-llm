@@ -295,6 +295,11 @@ func TestParseSLO(t *testing.T) {
 		_, err := parseSLO(map[string]any{"ttft_ms": "500"})
 		require.Error(t, err)
 	})
+	t.Run("negative rejected", func(t *testing.T) {
+		t.Parallel()
+		_, err := parseSLO(map[string]any{"tpot_ms": float64(-1)})
+		require.ErrorContains(t, err, "must be non-negative")
+	})
 }
 
 func TestChatResult_TPOT(t *testing.T) {

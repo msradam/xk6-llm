@@ -1,3 +1,9 @@
+// Minimal Poisson-arrival chat workload against an OpenAI-compatible server.
+// Defaults target local Ollama on port 11434. Override LLM_BASE_URL and
+// LLM_MODEL for any other endpoint.
+//
+// Run:
+//   ./build/k6 run examples/chat.js
 import llm from 'k6/x/llm';
 
 // Rate is requests per LLM_TIME_UNIT (default "1s"). Use e.g. LLM_RATE=1 LLM_TIME_UNIT=2s for 0.5 rps.

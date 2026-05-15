@@ -247,6 +247,9 @@ func parseSLO(raw any) (*SLOPredicate, error) {
 		if !ok {
 			return nil, fmt.Errorf("llm: slo.%s must be a number, got %T", key, v)
 		}
+		if f < 0 {
+			return nil, fmt.Errorf("llm: slo.%s must be non-negative, got %v", key, f)
+		}
 		switch key {
 		case "ttft_ms":
 			s.TTFTMs = f

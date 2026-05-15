@@ -191,5 +191,7 @@ func (d *Dataset) At(i int64) map[string]any {
 	return d.items[d.order[idx]].toJS()
 }
 
-// Reset rewinds the internal cursor. Useful for repeated runs in tests.
+// Reset rewinds the internal cursor so the next call to Next() returns the
+// first item again. Has no effect on the shuffle permutation or the cached
+// items themselves.
 func (d *Dataset) Reset() { d.cursor.Store(0) }
