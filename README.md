@@ -113,6 +113,17 @@ Methods: `dataset.size()`, `dataset.next()`, `dataset.at(i)`, `dataset.reset()`.
 
 A converter for ShareGPT V3 to this format lives at `scripts/sharegpt_to_jsonl.py`.
 
+## What you can simulate
+
+k6's load generator is a JavaScript runtime, so a single VU can carry conversation state, branch on responses, and drive multi-call workflows. xk6-llm doesn't define a session or agent abstraction; instead, the patterns live in [`examples/`](./examples/) and use the existing `Client` plus k6's `tags` to make the workflow visible in the dashboard.
+
+| Example | What it shows |
+|---|---|
+| [`multi-turn.js`](./examples/multi-turn.js) | A 5-turn conversation per VU iteration. Tags `cache_state` and `turn` on every call so the dashboard can show TTFT degradation across turns and prefix-cache speedup (typically 5 to 15x by turn 5). |
+| [`agent.js`](./examples/agent.js) | Tool-calling loop. Model emits `TOOL: name(arg)` or `DONE: answer`; the script runs the tool, feeds the result back, repeats. Tags `agent_id` and `iteration` so the dashboard rolls up per-session totals and full-envelope p95. |
+| [`rag.js`](./examples/rag.js) | Embed -> vector retrieve -> generate. Each phase has its own k6 Trend (`rag_embed_ms`, `rag_retrieve_ms`) with independent SLO thresholds. Set `EMBED_URL` and `RETRIEVE_URL` to point at real services. |
+| [`ab-providers.js`](./examples/ab-providers.js) | Two `Client` instances under two scenarios with different `cost` configs. Identical traffic, side-by-side latency and dollar-cost panels. Procurement decision in one screenshot. |
+
 ## Quickstart with Grafana
 
 A Docker Compose stack with a pre-provisioned dashboard is in [`quickstart/`](./quickstart/). See [`QUICKSTART.md`](./QUICKSTART.md).

@@ -156,13 +156,16 @@
     },
     {
       "type": "timeseries",
-      "title": "Errors by type",
+      "title": "Token throughput",
       "id": 21,
       "datasource": { "type": "prometheus", "uid": "xk6llm-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
-      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "stacking": { "mode": "normal" }, "fillOpacity": 80 } } },
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] }, "tooltip": { "mode": "multi" } },
-      "targets": [{ "expr": "sum by (error_type) (rate(k6_llm_errors_total[30s]))", "legendFormat": "{{error_type}}", "refId": "A" }]
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 25, "stacking": { "mode": "normal" } } } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "sum(rate(k6_llm_prompt_tokens_total[30s]))",     "legendFormat": "input tok/s",  "refId": "A" },
+        { "expr": "sum(rate(k6_llm_completion_tokens_total[30s]))", "legendFormat": "output tok/s", "refId": "B" }
+      ]
     },
 
     {
