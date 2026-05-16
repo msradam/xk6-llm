@@ -16,7 +16,7 @@ The full check runs `gofumpt`, `goimports`, `go vet`, `go mod tidy`, `golangci-l
 make tools
 ```
 
-This installs `gofumpt`, `goimports`, `golangci-lint` (v2.7.1), `gosec`, `govulncheck`, and `xk6` (v1.4.1) into `$GOPATH/bin`.
+This installs `gofumpt`, `goimports`, `golangci-lint` (v2.7.1), `gosec`, `govulncheck`, and `xk6` (v1.4.3) into `$GOPATH/bin`.
 
 ### Iterating
 

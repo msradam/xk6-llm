@@ -145,7 +145,7 @@ Cross-validated against `vllm bench serve` on a real vLLM 0.21.0 server (Qwen2.5
 
 | xk6-llm | k6 | xk6 |
 |---|---|---|
-| v0.x | v2.0.0 | 1.4.1 |
+| v0.x | v2.0.0 | 1.4.3 |
 
 ## Attribution
 

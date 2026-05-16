@@ -1,7 +1,7 @@
 SHELL := bash
 .SHELLFLAGS := -e -o pipefail -c
 MODULE := github.com/msradam/xk6-llm
-XK6_VERSION := v1.4.1
+XK6_VERSION := v1.4.3
 
 GOBIN := $(shell go env GOPATH)/bin
 export PATH := $(GOBIN):$(PATH)
