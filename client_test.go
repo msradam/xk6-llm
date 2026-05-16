@@ -83,7 +83,7 @@ func TestParseStream_SkipsRoleOnlyForTTFT(t *testing.T) {
 	resp := httpGet(t, srv.URL)
 
 	start := time.Now()
-	res, err := parseStream(resp.Body, start)
+	res, err := parseStream(context.Background(), resp.Body, start, abortPolicy{})
 	require.NoError(t, err)
 
 	require.Equal(t, "Hello world!", res.Content)
@@ -104,6 +104,132 @@ func TestParseStream_SkipsRoleOnlyForTTFT(t *testing.T) {
 	}
 }
 
+func TestParseStream_ToolCalls(t *testing.T) {
+	t.Parallel()
+	// Models stream tool_calls in fragments: id and name arrive once, arguments
+	// stream as JSON fragments. We must assemble them by index.
+	srv := sseServer(t, 5*time.Millisecond, []string{
+		roleChunk,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":"}}]},"finish_reason":null}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Boston\"}"}}]},"finish_reason":null}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"get_time","arguments":"{\"tz\":\"UTC\"}"}}]},"finish_reason":null}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		usageChunk(40, 12),
+		"[DONE]",
+	})
+	resp := httpGet(t, srv.URL)
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
+	require.NoError(t, err)
+
+	require.Equal(t, "tool_calls", res.FinishReason)
+	require.Empty(t, res.Content)
+	require.Len(t, res.ToolCalls, 2)
+
+	require.Equal(t, "call_a", res.ToolCalls[0].ID)
+	require.Equal(t, "get_weather", res.ToolCalls[0].Name)
+	require.JSONEq(t, `{"city":"Boston"}`, res.ToolCalls[0].Arguments)
+
+	require.Equal(t, "call_b", res.ToolCalls[1].ID)
+	require.Equal(t, "get_time", res.ToolCalls[1].Name)
+	require.JSONEq(t, `{"tz":"UTC"}`, res.ToolCalls[1].Arguments)
+
+	// TTFT must fire on the first tool_call delta, since the model is producing
+	// output even though no content text was emitted.
+	require.Greater(t, res.TTFT, time.Duration(0))
+}
+
+func TestParseStream_ContentAndToolCallsMixed(t *testing.T) {
+	t.Parallel()
+	srv := sseServer(t, 0, []string{
+		roleChunk,
+		contentChunk("Let me check. "),
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"f","arguments":"{}"}}]},"finish_reason":null}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		usageChunk(10, 5),
+		"[DONE]",
+	})
+	resp := httpGet(t, srv.URL)
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
+	require.NoError(t, err)
+	require.Equal(t, "Let me check. ", res.Content)
+	require.Len(t, res.ToolCalls, 1)
+	require.Equal(t, "f", res.ToolCalls[0].Name)
+}
+
+func TestParseStream_AbortAfterTokens(t *testing.T) {
+	t.Parallel()
+	srv := sseServer(t, 2*time.Millisecond, []string{
+		roleChunk,
+		contentChunk("one"),
+		contentChunk("two"),
+		contentChunk("three"),
+		contentChunk("four"),
+		contentChunk("five"),
+		usageChunk(10, 5),
+		"[DONE]",
+	})
+	resp := httpGet(t, srv.URL)
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{MaxTokens: 2})
+	require.NoError(t, err)
+	require.True(t, res.Aborted, "should be marked aborted")
+	require.Equal(t, 2, res.Chunks, "loop must stop after 2 content chunks")
+	require.Equal(t, "onetwo", res.Content)
+}
+
+func TestParseStream_AbortAfterMs(t *testing.T) {
+	t.Parallel()
+	// Server emits 6 chunks 20ms apart (~120ms total); we abort after 70ms,
+	// so we should see ~3 chunks land before the deadline trips.
+	srv := sseServer(t, 20*time.Millisecond, []string{
+		roleChunk,
+		contentChunk("a"),
+		contentChunk("b"),
+		contentChunk("c"),
+		contentChunk("d"),
+		contentChunk("e"),
+		"[DONE]",
+	})
+	c := newTestClient(t, "")
+	deadline := 70 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	require.NoError(t, err)
+	resp, err := c.http.Do(httpReq)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	res, err := parseStream(ctx, resp.Body, time.Now(), abortPolicy{MaxDuration: deadline})
+	require.NoError(t, err, "context-deadline failure must be folded into Aborted, not bubbled")
+	require.True(t, res.Aborted)
+	require.NotEmpty(t, res.Content, "some content should have arrived before the deadline")
+	require.Less(t, res.Chunks, 6, "must have cut off before all chunks streamed")
+}
+
+func TestParseChatRequest_AbortValidation(t *testing.T) {
+	t.Parallel()
+	c := &Client{cfg: &Options{Model: "x"}}
+
+	got, err := c.parseChatRequest(map[string]any{
+		"messages":           []any{},
+		"abort_after_ms":     float64(500),
+		"abort_after_tokens": float64(10),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 500*time.Millisecond, got.abort.MaxDuration)
+	require.Equal(t, 10, got.abort.MaxTokens)
+
+	_, err = c.parseChatRequest(map[string]any{"abort_after_ms": float64(-1)})
+	require.ErrorContains(t, err, "abort_after_ms")
+
+	_, err = c.parseChatRequest(map[string]any{"abort_after_tokens": float64(-5)})
+	require.ErrorContains(t, err, "abort_after_tokens")
+
+	_, err = c.parseChatRequest(map[string]any{"abort_after_ms": "soon"})
+	require.ErrorContains(t, err, "abort_after_ms")
+}
+
 func TestParseStream_UsageOmitted(t *testing.T) {
 	t.Parallel()
 	srv := sseServer(t, 0, []string{
@@ -114,7 +240,7 @@ func TestParseStream_UsageOmitted(t *testing.T) {
 	})
 	resp := httpGet(t, srv.URL)
 
-	res, err := parseStream(resp.Body, time.Now())
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
 	require.NoError(t, err)
 	require.Equal(t, "ab", res.Content)
 	require.Equal(t, 0, res.PromptTokens)
@@ -131,7 +257,7 @@ func TestParseStream_MidStreamError(t *testing.T) {
 	})
 	resp := httpGet(t, srv.URL)
 
-	_, err := parseStream(resp.Body, time.Now())
+	_, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "upstream exploded")
 }
@@ -145,7 +271,7 @@ func TestParseStream_SingleContentChunk_NoITL(t *testing.T) {
 	})
 	resp := httpGet(t, srv.URL)
 
-	res, err := parseStream(resp.Body, time.Now())
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
 	require.NoError(t, err)
 	require.Equal(t, "only", res.Content)
 	require.Empty(t, res.ITL, "one content chunk produces zero ITL samples")
@@ -166,7 +292,7 @@ func TestParseStream_MultiTokenChunk(t *testing.T) {
 	})
 	resp := httpGet(t, srv.URL)
 
-	res, err := parseStream(resp.Body, time.Now())
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
 	require.NoError(t, err)
 	require.Equal(t, "Hello world how are you?", res.Content)
 	require.Len(t, res.ITL, 1)
@@ -195,7 +321,7 @@ func TestITL_ClockHonesty(t *testing.T) {
 	srv := sseServer(t, gap, chunks)
 	resp := httpGet(t, srv.URL)
 
-	res, err := parseStream(resp.Body, time.Now())
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
 	require.NoError(t, err)
 	require.Len(t, res.ITL, nContent-1, "5 inter-chunk gaps for 6 content chunks")
 

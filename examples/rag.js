@@ -1,46 +1,47 @@
 // RAG simulation: embed query -> vector retrieve -> LLM generate, with each
-// phase measured against its own SLO. Emits k6-native Trends for embed and
-// retrieve so the dashboard can show the full envelope.
+// phase measured against its own SLO. The embed step uses client.embed()
+// against the same OpenAI-compatible server, so token counts and latency
+// flow into llm_embed_* metrics and show up on the dashboard.
 //
-// Set EMBED_URL and RETRIEVE_URL to real endpoints. Defaults POST to
-// httpbin.org so the script runs out of the box; swap in a real embeddings
-// server (OpenAI, vLLM, TEI) and vector DB (Qdrant, Pinecone, pgvector) for
+// Set EMBED_URL/EMBED_MODEL to point at a separate embedding server when the
+// generation model server doesn't host an /embeddings endpoint. Set
+// RETRIEVE_URL to a real vector DB (Qdrant, Pinecone, pgvector) for retrieval
 // numbers that mean something.
 //
 // Run:
 //   ./build/k6 run examples/rag.js \
-//     -e LLM_BASE_URL=http://localhost:11434/v1 -e LLM_MODEL=granite4.1:3b
+//     -e LLM_BASE_URL=http://localhost:11434/v1 -e LLM_MODEL=granite4.1:3b \
+//     -e EMBED_MODEL=nomic-embed-text
 import http from 'k6/http';
 import { Trend } from 'k6/metrics';
 import llm from 'k6/x/llm';
 
-const ragEmbed    = new Trend('rag_embed_ms', true);
 const ragRetrieve = new Trend('rag_retrieve_ms', true);
 
 export const options = {
   vus: 4, duration: '30s',
   thresholds: {
-    llm_errors: ['count==0'],
-    rag_embed_ms:    ['p(95)<200'],
-    rag_retrieve_ms: ['p(95)<150'],
-    llm_ttft:        ['p(95)<2000'],
+    llm_errors:        ['count==0'],
+    llm_embed_errors:  ['count==0'],
+    llm_embed_duration:['p(95)<500'],
+    rag_retrieve_ms:   ['p(95)<150'],
+    llm_ttft:          ['p(95)<3000'],
   },
 };
 
-const client = new llm.Client({
+const generator = new llm.Client({
   base_url: __ENV.LLM_BASE_URL ?? 'http://localhost:11434/v1',
   model:    __ENV.LLM_MODEL    ?? 'granite4.1:3b',
 });
 
-const EMBED_URL    = __ENV.EMBED_URL    ?? 'https://httpbin.org/anything/embed';
-const RETRIEVE_URL = __ENV.RETRIEVE_URL ?? 'https://httpbin.org/anything/retrieve';
+// Same base_url by default since Ollama hosts both endpoints. Point at a
+// dedicated embedding server (TEI, vLLM-emb, Infinity) for production.
+const embedder = new llm.Client({
+  base_url: __ENV.EMBED_URL    ?? __ENV.LLM_BASE_URL ?? 'http://localhost:11434/v1',
+  model:    __ENV.EMBED_MODEL  ?? 'nomic-embed-text',
+});
 
-function embed(text) {
-  const t0 = Date.now();
-  http.post(EMBED_URL, JSON.stringify({ input: text }), { headers: { 'Content-Type': 'application/json' } });
-  ragEmbed.add(Date.now() - t0);
-  return [/* fake embedding */];
-}
+const RETRIEVE_URL = __ENV.RETRIEVE_URL ?? 'https://httpbin.org/anything/retrieve';
 
 function retrieve(_vector, k) {
   const t0 = Date.now();
@@ -61,10 +62,12 @@ const QUERIES = [
 
 export default async function () {
   const q = QUERIES[__ITER % QUERIES.length];
-  const vec    = embed(q);
-  const chunks = retrieve(vec, 3);
+
+  const emb = await embedder.embed({ input: q, tags: { workflow: 'rag' } });
+  const chunks = retrieve(emb.embeddings[0], 3);
+
   const prompt = `Context:\n- ${chunks.join('\n- ')}\n\nQuestion: ${q}`;
-  const res = await client.chat({
+  const res = await generator.chat({
     messages:    [{ role: 'user', content: prompt }],
     max_tokens:  120,
     temperature: 0,

@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -104,13 +105,31 @@ type chatRequest struct {
 	slo        *SLOPredicate
 	cacheState string            // "cold"|"warm"|""
 	tags       map[string]string // user-supplied request-scoped tags
+	abort      abortPolicy
+}
+
+// abortPolicy bounds how long / how many tokens we consume before cancelling
+// the upstream stream. Either limit can be active; the first to trip wins.
+type abortPolicy struct {
+	MaxDuration time.Duration // 0 = disabled. Wall clock from request start.
+	MaxTokens   int           // 0 = disabled. Counted in content-bearing chunks.
 }
 
 // Control-key set: fields recognized by xk6-llm and stripped before the OpenAI POST.
 var controlKeys = map[string]bool{
-	"slo":         true,
-	"cache_state": true,
-	"tags":        true,
+	"slo":                true,
+	"cache_state":        true,
+	"tags":               true,
+	"abort_after_ms":     true,
+	"abort_after_tokens": true,
+}
+
+// ToolCall is one assembled tool invocation from a streamed assistant turn.
+// Arguments is the raw JSON string the model produced; callers parse it.
+type ToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
 }
 
 type chatResult struct {
@@ -123,6 +142,8 @@ type chatResult struct {
 	PromptTokens     int
 	CompletionTokens int
 	FinishReason     string
+	ToolCalls        []ToolCall
+	Aborted          bool          // true when the stream was cut short by abort_after_ms or abort_after_tokens
 	SLO              *SLOPredicate // copied from request; used by emit() to decide which Rates to push
 }
 
@@ -162,6 +183,20 @@ func (r *chatResult) toJSObject() map[string]any {
 		out["tpot_ms"] = float64(r.TPOT()) / float64(time.Millisecond)
 	} else {
 		out["tpot_ms"] = 0.0
+	}
+	out["aborted"] = r.Aborted
+	if len(r.ToolCalls) > 0 {
+		tcs := make([]map[string]any, len(r.ToolCalls))
+		for i, tc := range r.ToolCalls {
+			tcs[i] = map[string]any{
+				"id":        tc.ID,
+				"name":      tc.Name,
+				"arguments": tc.Arguments,
+			}
+		}
+		out["tool_calls"] = tcs
+	} else {
+		out["tool_calls"] = []map[string]any{}
 	}
 	return out
 }
@@ -233,6 +268,20 @@ func (c *Client) parseChatRequest(raw map[string]any) (*chatRequest, error) {
 			return nil, fmt.Errorf("llm: cache_state must be 'cold' or 'warm', got %q", v)
 		}
 	}
+	if v, ok := raw["abort_after_ms"]; ok && v != nil {
+		f, ok := asFloat(v)
+		if !ok || f < 0 {
+			return nil, fmt.Errorf("llm: abort_after_ms must be a non-negative number, got %v", v)
+		}
+		req.abort.MaxDuration = time.Duration(f * float64(time.Millisecond))
+	}
+	if v, ok := raw["abort_after_tokens"]; ok && v != nil {
+		f, ok := asFloat(v)
+		if !ok || f < 0 {
+			return nil, fmt.Errorf("llm: abort_after_tokens must be a non-negative integer, got %v", v)
+		}
+		req.abort.MaxTokens = int(f)
+	}
 	if v, ok := raw["tags"]; ok && v != nil {
 		m, ok := v.(map[string]any)
 		if !ok {
@@ -264,9 +313,22 @@ func (p *chatRequest) tagSet() map[string]string {
 }
 
 // openAI streaming wire types. Only the fields we read.
+type sseToolCallFunction struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+}
+
+type sseToolCallDelta struct {
+	Index    int                 `json:"index"`
+	ID       string              `json:"id,omitempty"`
+	Type     string              `json:"type,omitempty"`
+	Function sseToolCallFunction `json:"function"`
+}
+
 type sseChoiceDelta struct {
-	Role    string `json:"role,omitempty"`
-	Content string `json:"content,omitempty"`
+	Role      string             `json:"role,omitempty"`
+	Content   string             `json:"content,omitempty"`
+	ToolCalls []sseToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 type sseChoice struct {
@@ -321,6 +383,17 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		httpReq.Header.Set(k, v)
 	}
 
+	// Wire abort_after_ms into the request context so closing the body
+	// propagates a TCP close back to the server and stops generation.
+	reqCtx := ctx
+	if req.abort.MaxDuration > 0 {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, req.abort.MaxDuration)
+		defer cancel()
+		// Rebuild the request with the deadline-bound context.
+		httpReq = httpReq.WithContext(reqCtx)
+	}
+
 	start := time.Now()
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -338,7 +411,7 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		return nil, newChatError(kind, fmt.Errorf("http %d: %s", resp.StatusCode, bytes.TrimSpace(raw)))
 	}
 
-	res, err := parseStream(resp.Body, start)
+	res, err := parseStream(reqCtx, resp.Body, start, req.abort)
 	if err != nil {
 		return nil, newChatError(errKindStream, err)
 	}
@@ -348,13 +421,22 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 
 // parseStream consumes an SSE chat-completion stream and applies vLLM-aligned timing.
 //
-//   - TTFT is timed at the first chunk with non-empty choices[0].delta.content.
-//     Role-only deltas are skipped (matches vLLM endpoint_request_func.py).
+//   - TTFT is timed at the first chunk with non-empty choices[0].delta.content
+//     OR the first tool_call delta carrying a name/id/arguments. Role-only
+//     deltas are skipped (matches vLLM endpoint_request_func.py).
 //   - ITL samples are deltas between consecutive content chunks. The first ITL
-//     sample is t[chunk2] - t[chunk1], NOT t[chunk1] - start.
+//     sample is t[chunk2] - t[chunk1], NOT t[chunk1] - start. tool_call deltas
+//     do not contribute to ITL because their per-chunk granularity is arbitrary.
 //   - res.Chunks counts content-bearing chunks. When res.Chunks < CompletionTokens,
 //     the server is emitting multi-token chunks (TGI batched mode, spec-dec).
-func parseStream(r io.Reader, start time.Time) (*chatResult, error) {
+//   - tool_call arguments are JSON strings streamed in fragments; they are
+//     concatenated per `index` and surfaced raw (not parsed) in res.ToolCalls.
+//   - When abort.MaxTokens is set, the loop breaks (with res.Aborted=true)
+//     after that many content chunks. When abort.MaxDuration is set, the
+//     outer context cancellation makes the body Read fail; if reqCtx.Err()
+//     indicates that, the partial result is returned with res.Aborted=true
+//     instead of bubbling the read error.
+func parseStream(reqCtx context.Context, r io.Reader, start time.Time, abort abortPolicy) (*chatResult, error) {
 	res := &chatResult{}
 	var buf strings.Builder
 
@@ -362,8 +444,10 @@ func parseStream(r io.Reader, start time.Time) (*chatResult, error) {
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	var (
-		gotFirstContent bool
-		lastContentT    time.Time
+		gotFirstToken bool
+		lastContentT  time.Time
+		toolBuf       = map[int]*ToolCall{}
+		toolOrder     []int
 	)
 
 	for sc.Scan() {
@@ -400,26 +484,68 @@ func parseStream(r io.Reader, start time.Time) (*chatResult, error) {
 		if ch.FinishReason != nil && *ch.FinishReason != "" {
 			res.FinishReason = *ch.FinishReason
 		}
-		if ch.Delta.Content == "" {
-			// Role-only or empty delta; does not count toward TTFT, ITL, or Chunks.
-			continue
-		}
 
 		now := time.Now()
-		buf.WriteString(ch.Delta.Content)
-		res.Chunks++
+		hadContent := ch.Delta.Content != ""
+		hadTool := false
 
-		if !gotFirstContent {
-			res.TTFT = now.Sub(start)
-			gotFirstContent = true
+		if hadContent {
+			buf.WriteString(ch.Delta.Content)
+			res.Chunks++
+			if gotFirstToken {
+				res.ITL = append(res.ITL, now.Sub(lastContentT))
+			}
 			lastContentT = now
-			continue
 		}
-		res.ITL = append(res.ITL, now.Sub(lastContentT))
-		lastContentT = now
+
+		if abort.MaxTokens > 0 && res.Chunks >= abort.MaxTokens {
+			res.Aborted = true
+			break
+		}
+
+		for _, tc := range ch.Delta.ToolCalls {
+			if tc.ID == "" && tc.Function.Name == "" && tc.Function.Arguments == "" {
+				continue
+			}
+			hadTool = true
+			existing, ok := toolBuf[tc.Index]
+			if !ok {
+				existing = &ToolCall{}
+				toolBuf[tc.Index] = existing
+				toolOrder = append(toolOrder, tc.Index)
+			}
+			if tc.ID != "" {
+				existing.ID = tc.ID
+			}
+			if tc.Function.Name != "" {
+				existing.Name = tc.Function.Name
+			}
+			if tc.Function.Arguments != "" {
+				existing.Arguments += tc.Function.Arguments
+			}
+		}
+
+		if !gotFirstToken && (hadContent || hadTool) {
+			res.TTFT = now.Sub(start)
+			gotFirstToken = true
+		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("read stream: %w", err)
+		// If our deadline tripped, treat the read failure as an intentional
+		// abort and return the partial result.
+		if abort.MaxDuration > 0 && reqCtx != nil && reqCtx.Err() != nil {
+			res.Aborted = true
+		} else {
+			return nil, fmt.Errorf("read stream: %w", err)
+		}
+	}
+
+	if len(toolOrder) > 0 {
+		sort.Ints(toolOrder)
+		res.ToolCalls = make([]ToolCall, 0, len(toolOrder))
+		for _, idx := range toolOrder {
+			res.ToolCalls = append(res.ToolCalls, *toolBuf[idx])
+		}
 	}
 
 	res.Duration = time.Since(start)

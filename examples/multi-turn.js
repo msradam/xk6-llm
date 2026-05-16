@@ -4,10 +4,10 @@
 // state. Turn 1 hits cold KV cache; turn N typically hits warm prefix cache for
 // most of its input. Single-shot benchmarks miss this entirely.
 //
-// This example models a 5-turn debugging session and tags every chat() call
-// with session_id, turn, and cache_state. The dashboard can then aggregate by
-// session_id (total tokens per session, p95 session duration) and slice by
-// turn (TTFT degradation across turns).
+// This example models a 5-turn debugging session using llm.Session, which
+// auto-stamps session_id, turn, and cache_state tags. The dashboard can then
+// aggregate by session_id (total tokens per session, p95 session duration) and
+// slice by turn (TTFT degradation across turns).
 //
 // Run:
 //   ./build/k6 run examples/multi-turn.js \
@@ -36,35 +36,6 @@ const client = new llm.Client({
   slo: { ttft_ms: 1500, tpot_ms: 80, e2el_ms: 15000 },
 });
 
-// Session keeps conversation state per VU. The Go-side Client knows nothing
-// about it; this is pure JS that any user can copy and modify.
-class Session {
-  constructor(systemPrompt) {
-    this.id = `s-${__VU}-${__ITER}`;
-    this.messages = [{ role: 'system', content: systemPrompt }];
-    this.turn = 0;
-    this.tokens = 0;
-  }
-
-  async send(userText) {
-    this.turn++;
-    this.messages.push({ role: 'user', content: userText });
-    const res = await client.chat({
-      messages:    this.messages,
-      max_tokens:  256,
-      temperature: 0,
-      cache_state: this.turn === 1 ? 'cold' : 'warm',
-      tags: {
-        session_id: this.id,
-        turn:       String(this.turn),
-      },
-    });
-    this.messages.push({ role: 'assistant', content: res.content });
-    this.tokens += res.completion_tokens;
-    return res;
-  }
-}
-
 const PROMPTS = [
   'My query joining 3 tables (10M rows each) takes 45 seconds. Where do I start investigating?',
   'EXPLAIN ANALYZE shows a hash join on the largest table is the slowest step.',
@@ -74,9 +45,12 @@ const PROMPTS = [
 ];
 
 export default async function () {
-  const s = new Session('You are a senior SRE helping debug Postgres performance.');
+  const s = new llm.Session(client, {
+    system: 'You are a senior SRE helping debug Postgres performance.',
+    id:     `s-${__VU}-${__ITER}`,
+  });
   for (const prompt of PROMPTS) {
-    const r = await s.send(prompt);
-    if (!r.content) throw new Error(`empty turn ${s.turn}`);
+    const r = await s.send({ content: prompt, max_tokens: 256, temperature: 0 });
+    if (!r.content) throw new Error(`empty turn ${s.turn()}`);
   }
 }

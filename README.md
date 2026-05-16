@@ -68,6 +68,13 @@ Every metric is tagged `model`. Errors are additionally tagged `error_type`. Per
 | `llm_cost_usd` | Trend | USD per request. Emitted only when `cost` is supplied. |
 | `llm_energy_j` | Trend | Estimated joules per request. Emitted only when `energy` is supplied. |
 | `llm_energy_j_per_token` | Trend | `llm_energy_j / completion_tokens`. |
+| `llm_tool_calls` | Counter | Tool invocations the model emitted. Omitted when zero. |
+| `llm_embed_requests` | Counter | Successful `/v1/embeddings` calls. |
+| `llm_embed_errors` | Counter | Embed failures (tag `error_type`). |
+| `llm_embed_duration` | Trend (Time) | End-to-end wall time of an embed call. |
+| `llm_embed_tokens` | Counter | Server-reported `usage.prompt_tokens` for embed calls. |
+| `llm_embed_inputs` | Counter | Number of input strings per embed call. |
+| `llm_aborted` | Counter | Chat completions cut short by `abort_after_ms` or `abort_after_tokens`. |
 
 ## API
 

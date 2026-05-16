@@ -25,6 +25,7 @@ func (m *module) Exports() modules.Exports {
 		Named: map[string]any{
 			"Client":  m.newClient,
 			"Dataset": m.newDataset,
+			"Session": m.newSession,
 		},
 	}
 }
