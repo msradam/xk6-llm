@@ -1,10 +1,9 @@
-// Mid-stream cancellation. Real chat UIs abort generation when the user
-// clicks stop or navigates away, but the server keeps producing tokens until
-// it sees the TCP close. This example stresses both abort paths so you can
-// load-test the cancellation handling on your inference server.
+// Mid-stream cancellation. Chat UIs abort when the user clicks stop or
+// navigates away; the server keeps producing tokens until it sees the TCP
+// close. This script exercises both abort paths.
 //
-// abort_after_ms     — wall-clock cap (UI gives up while waiting).
-// abort_after_tokens — content-cap (UI stopped reading after N tokens).
+// abort_after_ms: wall-clock cap (UI gives up while waiting).
+// abort_after_tokens: content cap (UI stopped reading after N tokens).
 //
 // Run:
 //   ./build/k6 run examples/abort.js \
