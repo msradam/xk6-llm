@@ -304,7 +304,14 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 		Tags:        tags,
 		Metadata:    c.generationMetadata(res),
 	}
+	// SystemPrompt is content, and the SDK strips it in metadata-only mode, so
+	// sending it outside capture would be dropped downstream anyway. The
+	// consequence is worth stating plainly: prompt-derived agent versioning is
+	// only available with content capture on.
 	if acfg.CaptureContent {
+		sys := systemPrompt(req)
+		start.SystemPrompt = sys
+		gen.SystemPrompt = sys
 		gen.Input = promptMessages(req)
 		gen.Output = []model.Message{{
 			Role:  model.RoleAssistant,
@@ -414,6 +421,36 @@ func msOf(d time.Duration) float64 {
 	return float64(d) / float64(time.Millisecond)
 }
 
+// systemPrompt returns the request's system instruction.
+//
+// This field carries agent *identity*, not just content. When a caller
+// declares no agent_version, the collector derives the agent's effective
+// version by hashing the system prompt, so leaving it empty collapses every
+// agent to one constant version and a version-delta view has nothing to
+// compare. Two wire shapes produce it: an OpenAI `role: system` message, or
+// the top-level `system` field the Anthropic and Responses translation layers
+// hoist it into.
+func systemPrompt(req *chatRequest) string {
+	if s, ok := req.body["system"].(string); ok && s != "" {
+		return s
+	}
+	raw, ok := asAnySlice(req.body["messages"])
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok || m["role"] != "system" {
+			continue
+		}
+		if text, ok := m["content"].(string); ok && text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 // promptMessages converts the request's OpenAI-shaped messages into SDK
 // messages. Non-string content (multimodal parts) is skipped rather than
 // guessed at: a wrong shape in a telemetry record is worse than a missing one.
@@ -426,6 +463,12 @@ func promptMessages(req *chatRequest) []model.Message {
 	for _, item := range raw {
 		m, ok := item.(map[string]any)
 		if !ok {
+			continue
+		}
+		// The system instruction travels in Generation.SystemPrompt. Emitting
+		// it here too would duplicate it, and the role mapping below would
+		// mislabel it as a user turn.
+		if m["role"] == "system" {
 			continue
 		}
 		text, ok := m["content"].(string)

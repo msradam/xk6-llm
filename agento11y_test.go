@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grafana/agento11y/go/agento11y/model"
 	agento11yv1 "github.com/grafana/agento11y/go/proto/agento11y/v1"
 	"github.com/grafana/agento11y/go/proto/agento11y/wire"
 	"github.com/stretchr/testify/require"
@@ -388,4 +389,75 @@ func TestExportGeneration_CarriesParentLineage(t *testing.T) {
 	require.Equal(t, []string{"gen-root", "gen-sibling"}, gotPar,
 		"multi-parent lineage survives the wire")
 	require.Equal(t, "conv-1", gotConv)
+}
+
+// TestSystemPrompt_BothWireShapes covers the two places a system instruction
+// can live. The Anthropic and Responses translation layers hoist it out of the
+// messages array into a top-level field, so reading only `messages` returns
+// empty for two of the three wires.
+func TestSystemPrompt_BothWireShapes(t *testing.T) {
+	t.Parallel()
+
+	openAI := &chatRequest{body: map[string]any{
+		"messages": []any{
+			map[string]any{"role": "system", "content": "be terse"},
+			map[string]any{"role": "user", "content": "hi"},
+		},
+	}}
+	require.Equal(t, "be terse", systemPrompt(openAI))
+
+	// Anthropic / Responses shape after translation.
+	hoisted := &chatRequest{body: map[string]any{
+		"system":   "be terse",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}}
+	require.Equal(t, "be terse", systemPrompt(hoisted))
+
+	// Session builds history as []map[string]any, not []any.
+	session := &chatRequest{body: map[string]any{
+		"messages": []map[string]any{
+			{"role": "system", "content": "be terse"},
+			{"role": "user", "content": "hi"},
+		},
+	}}
+	require.Equal(t, "be terse", systemPrompt(session))
+
+	require.Empty(t, systemPrompt(&chatRequest{body: map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}}), "no system message means no system prompt")
+}
+
+// TestSystemPrompt_MultipleMessagesJoin mirrors anthropicBody, which joins
+// several system messages with a blank line rather than keeping the first.
+func TestSystemPrompt_MultipleMessagesJoin(t *testing.T) {
+	t.Parallel()
+	req := &chatRequest{body: map[string]any{
+		"messages": []any{
+			map[string]any{"role": "system", "content": "first"},
+			map[string]any{"role": "system", "content": "second"},
+			map[string]any{"role": "user", "content": "hi"},
+		},
+	}}
+	require.Equal(t, "first\n\nsecond", systemPrompt(req))
+}
+
+// TestPromptMessages_ExcludesSystem guards against double-reporting. The system
+// instruction travels in Generation.SystemPrompt; emitting it in Input too
+// would duplicate it and, because the role switch has no "system" case, would
+// mislabel it as a user turn.
+func TestPromptMessages_ExcludesSystem(t *testing.T) {
+	t.Parallel()
+	msgs := promptMessages(&chatRequest{body: map[string]any{
+		"messages": []any{
+			map[string]any{"role": "system", "content": "be terse"},
+			map[string]any{"role": "user", "content": "hi"},
+			map[string]any{"role": "assistant", "content": "hello"},
+		},
+	}})
+	require.Len(t, msgs, 2)
+	require.Equal(t, model.RoleUser, msgs[0].Role)
+	require.Equal(t, model.RoleAssistant, msgs[1].Role)
+	for _, m := range msgs {
+		require.NotEqual(t, "be terse", m.Parts[0].Text, "system prompt must not appear in Input")
+	}
 }
