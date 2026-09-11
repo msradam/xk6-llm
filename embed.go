@@ -64,6 +64,14 @@ func (c *Client) Embed(req map[string]any) *sobek.Promise {
 		reject(err)
 		return promise
 	}
+	// Anthropic has no embeddings endpoint. Without this the request would be
+	// posted to <base_url>/embeddings and come back as an opaque 404, which
+	// reads like a misconfigured base_url rather than an unsupported feature.
+	if c.cfg.Wire == WireAnthropic {
+		c.emitEmbedError(ctx, parsed.model, errKindUnsupported, parsed.tags)
+		reject(errors.New("llm: embed() is not supported on the anthropic wire (the Messages API has no embeddings endpoint); use an openai-compatible client for embeddings"))
+		return promise
+	}
 
 	go func() {
 		res, err := c.doEmbed(ctx, parsed)

@@ -205,23 +205,17 @@ func (c *Client) emit(ctx context.Context, model string, r *chatResult, extraTag
 
 	// Per-SLO and goodput samples, only when an SLO predicate was supplied.
 	if r.SLO != nil && !r.SLO.Empty() {
-		ok := true
-		if r.SLO.TTFTMs > 0 {
-			pass := float64(r.TTFT)/float64(time.Millisecond) <= r.SLO.TTFTMs
-			samples = append(samples, boolSample(now, mx.SLOTTFT, tags, ctm.Metadata, pass))
-			ok = ok && pass
+		slo := r.sloOutcome()
+		if slo.TTFTChecked {
+			samples = append(samples, boolSample(now, mx.SLOTTFT, tags, ctm.Metadata, slo.TTFTPass))
 		}
-		if r.SLO.TPOTMs > 0 && r.TPOTDerivable() {
-			pass := float64(r.TPOT())/float64(time.Millisecond) <= r.SLO.TPOTMs
-			samples = append(samples, boolSample(now, mx.SLOTPOT, tags, ctm.Metadata, pass))
-			ok = ok && pass
+		if slo.TPOTChecked {
+			samples = append(samples, boolSample(now, mx.SLOTPOT, tags, ctm.Metadata, slo.TPOTPass))
 		}
-		if r.SLO.E2ELMs > 0 {
-			pass := float64(r.Duration)/float64(time.Millisecond) <= r.SLO.E2ELMs
-			samples = append(samples, boolSample(now, mx.SLOE2EL, tags, ctm.Metadata, pass))
-			ok = ok && pass
+		if slo.E2ELChecked {
+			samples = append(samples, boolSample(now, mx.SLOE2EL, tags, ctm.Metadata, slo.E2ELPass))
 		}
-		samples = append(samples, boolSample(now, mx.Goodput, tags, ctm.Metadata, ok))
+		samples = append(samples, boolSample(now, mx.Goodput, tags, ctm.Metadata, slo.AllPass))
 	}
 
 	if cm := c.cfg.Cost; !cm.Empty() {

@@ -598,3 +598,130 @@ func TestDoChat_ResponseHeadersTiming(t *testing.T) {
 	// TTFT must include the header delay + the post-header gap before first content.
 	require.GreaterOrEqual(t, res.TTFT, res.ResponseHeaders, "TTFT >= response_headers")
 }
+
+// TestParseStream_ToolCallBeforeContent_NoBogusITL covers a stream whose first
+// delta is a tool call and whose content arrives afterwards.
+//
+// The tool delta establishes TTFT. If ITL were gated on that rather than on a
+// previous content timestamp, the first content chunk would subtract the zero
+// time and emit an ITL sample of MaxInt64 nanoseconds (~2562047h).
+func TestParseStream_ToolCallBeforeContent_NoBogusITL(t *testing.T) {
+	t.Parallel()
+	srv := sseServer(t, 5*time.Millisecond, []string{
+		roleChunk,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null}]}`,
+		contentChunk("then"),
+		contentChunk(" text"),
+		usageChunk(5, 2),
+		"[DONE]",
+	})
+	resp := httpGet(t, srv.URL)
+
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
+	require.NoError(t, err)
+
+	require.Equal(t, "then text", res.Content)
+	require.Len(t, res.ITL, 1, "2 content chunks → exactly 1 ITL sample")
+	for _, itl := range res.ITL {
+		require.Positive(t, itl)
+		require.Less(t, itl, time.Second, "no zero-time subtraction artifact")
+	}
+	require.Positive(t, res.TTFT, "the tool call still establishes TTFT")
+}
+
+// TestParseStream_VLLMReasoningContent covers an OpenAI-compatible reasoning
+// stream — the shape vLLM and SGLang emit with a reasoning parser enabled, and
+// what the DeepSeek API returns.
+//
+// Reasoning arrives under `delta.reasoning_content` and its tokens are billed
+// inside `completion_tokens` with a `completion_tokens_details` breakout. A
+// parser that ignores the field times TTFT at the first text delta (after the
+// whole reasoning phase) and divides the remaining wall-clock by all completion
+// tokens, most of which never streamed as text.
+func TestParseStream_VLLMReasoningContent(t *testing.T) {
+	t.Parallel()
+	reasoning := func(s string) string {
+		return `{"choices":[{"index":0,"delta":{"reasoning_content":"` + s + `"},"finish_reason":null}]}`
+	}
+	srv := sseServer(t, 10*time.Millisecond, []string{
+		roleChunk,
+		reasoning("Let me think. "),
+		reasoning("An exemplar links "),
+		reasoning("a metric to a trace."),
+		contentChunk("An exemplar"),
+		contentChunk(" links a metric to a trace."),
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		`{"choices":[],"usage":{"prompt_tokens":18,"completion_tokens":60,"total_tokens":78,"completion_tokens_details":{"reasoning_tokens":49}}}`,
+		"[DONE]",
+	})
+	resp := httpGet(t, srv.URL)
+
+	start := time.Now()
+	res, err := parseStream(context.Background(), resp.Body, start, abortPolicy{})
+	require.NoError(t, err)
+
+	require.Equal(t, "An exemplar links a metric to a trace.", res.Content,
+		"reasoning text must not leak into the completion")
+	require.Equal(t, 3, res.ThinkingChunks)
+	require.Equal(t, 2, res.Chunks, "Chunks counts text deltas only")
+	require.Equal(t, 60, res.CompletionTokens)
+	require.Equal(t, 49, res.ThinkingTokens, "reasoning breakout decoded")
+
+	// The role chunk is at ~0ms, reasoning deltas at ~10/20/30ms, text at
+	// ~40/50ms. TTFT must land on the first reasoning delta.
+	require.Greater(t, res.TTFText, res.TTFT,
+		"time-to-first-text is later than TTFT when reasoning precedes text")
+	require.Less(t, res.TTFT, 35*time.Millisecond)
+	require.GreaterOrEqual(t, res.TTFText, 35*time.Millisecond)
+
+	// TPOT over the 11 streamed text tokens from the text phase, not over all
+	// 60 billed tokens from TTFT.
+	tokens, from := res.streamedOutput()
+	require.Equal(t, 11, tokens)
+	require.Equal(t, res.TTFText, from)
+	require.True(t, res.TPOTDerivable())
+	require.Greater(t, res.TPOT(), time.Microsecond)
+
+	require.Len(t, res.ITL, 1, "2 text deltas → 1 ITL sample")
+	require.Less(t, res.ITL[0], time.Second, "no zero-time subtraction artifact")
+}
+
+// TestParseStream_OpenRouterReasoningField covers the other field name in the
+// wild: OpenRouter streams reasoning under `reasoning` rather than
+// `reasoning_content`.
+func TestParseStream_OpenRouterReasoningField(t *testing.T) {
+	t.Parallel()
+	srv := sseServer(t, 5*time.Millisecond, []string{
+		roleChunk,
+		`{"choices":[{"index":0,"delta":{"reasoning":"thinking..."},"finish_reason":null}]}`,
+		contentChunk("answer"),
+		usageChunk(5, 9),
+		"[DONE]",
+	})
+	resp := httpGet(t, srv.URL)
+
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
+	require.NoError(t, err)
+	require.Equal(t, "answer", res.Content)
+	require.Equal(t, 1, res.ThinkingChunks)
+	require.Equal(t, 1, res.Chunks)
+	require.Positive(t, res.TTFT)
+}
+
+func TestParseStream_CachedTokens(t *testing.T) {
+	t.Parallel()
+	// Chat completions reports it as prompt_tokens_details.cached_tokens.
+	srv := sseServer(t, time.Millisecond, []string{
+		roleChunk,
+		contentChunk("hi"),
+		`{"choices":[],"usage":{"prompt_tokens":1500,"completion_tokens":10,"total_tokens":1510,` +
+			`"prompt_tokens_details":{"cached_tokens":1024}}}`,
+		"[DONE]",
+	})
+	resp := httpGet(t, srv.URL)
+
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
+	require.NoError(t, err)
+	require.Equal(t, 1500, res.PromptTokens)
+	require.Equal(t, 1024, res.CachedTokens)
+}

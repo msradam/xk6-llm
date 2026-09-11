@@ -13,6 +13,10 @@ type Options struct {
 	Model     string
 	Timeout   time.Duration
 	IgnoreEOS bool
+	// Wire selects the request encoding: "openai" (default) or "anthropic".
+	// Set it to drive an Anthropic Messages endpoint, including a gateway that
+	// fronts one.
+	Wire Wire
 	// Headers are sent on every request. Use for custom auth schemes, gateway
 	// routing keys (e.g. OpenRouter "HTTP-Referer"), or observability headers.
 	Headers map[string]string
@@ -22,6 +26,9 @@ type Options struct {
 	Energy *EnergyModel
 	// Cost, when set, enables per-request USD estimation. See CostModel.
 	Cost *CostModel
+	// Agento11y, when set, exports one Grafana Agent Observability generation
+	// record per chat call. See Agento11yConfig.
+	Agento11y *Agento11yConfig
 }
 
 // CostModel parameterises a per-request USD cost estimate, computed from
@@ -111,6 +118,7 @@ func parseOptions(raw any) (*Options, error) {
 		BaseURL: defaultBaseURL,
 		Model:   defaultModel,
 		Timeout: defaultTimeout,
+		Wire:    WireOpenAI,
 	}
 	if raw == nil {
 		return o, nil
@@ -135,6 +143,22 @@ func parseOptions(raw any) (*Options, error) {
 	}
 	if v, ok := m["ignore_eos"].(bool); ok {
 		o.IgnoreEOS = v
+	}
+	if v, ok := m["agento11y"]; ok && v != nil {
+		a, err := parseAgento11y(v)
+		if err != nil {
+			return nil, err
+		}
+		o.Agento11y = a
+	}
+	if v, ok := m["wire"].(string); ok && v != "" {
+		switch Wire(v) {
+		case WireOpenAI, WireAnthropic, WireResponses:
+			o.Wire = Wire(v)
+		default:
+			return nil, fmt.Errorf("llm.Client: 'wire' must be %q, %q, or %q, got %q",
+				WireOpenAI, WireAnthropic, WireResponses, v)
+		}
 	}
 	if v, ok := m["headers"]; ok && v != nil {
 		hm, ok := v.(map[string]any)
