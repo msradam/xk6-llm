@@ -328,10 +328,18 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 	if acfg.CaptureContent {
 		gen.SystemPrompt = sys
 		gen.Input = promptMessages(req)
-		gen.Output = []model.Message{{
-			Role:  model.RoleAssistant,
-			Parts: []model.Part{{Kind: model.PartKindText, Text: res.Content}},
-		}}
+		// Only attach a completion when there is one. A text part carrying an
+		// empty string sets no payload field, which fails SDK validation with
+		// "generation.output[0].parts[0] must set exactly one payload field"
+		// and drops the entire record. That would silently lose exactly the
+		// case these checks exist to catch: a request that billed for output
+		// and returned no text. The token counts carry it instead.
+		if res.Content != "" {
+			gen.Output = []model.Message{{
+				Role:  model.RoleAssistant,
+				Parts: []model.Part{{Kind: model.PartKindText, Text: res.Content}},
+			}}
+		}
 	}
 
 	rec.SetResult(gen, nil)

@@ -582,3 +582,25 @@ func TestExportGeneration_DeclaredVersionWins(t *testing.T) {
 	require.Empty(t, got.GetEffectiveVersion(),
 		"a declared version is the caller's, so we must not preempt it")
 }
+
+// TestExportGeneration_EmptyCompletionStillExports is the regression test for a
+// record that was being dropped instead of reported.
+//
+// An empty completion is the failure an answer-rate check exists to find: the
+// request billed for output tokens and returned no text. With content capture
+// on, attaching that empty string as a text part set no payload field, so SDK
+// validation rejected the whole generation and the evidence never arrived.
+func TestExportGeneration_EmptyCompletionStillExports(t *testing.T) {
+	t.Parallel()
+
+	got := exportOnce(t,
+		&Agento11yConfig{Synthetic: true, CaptureContent: true},
+		sysReq("be terse"), "")
+
+	require.Equal(t, "gen-1", got.GetId(), "the record must arrive, not be dropped")
+	require.Empty(t, got.GetOutput(), "no completion means no output message")
+	require.Equal(t, "be terse", got.GetSystemPrompt(),
+		"the rest of the captured content is unaffected")
+	require.EqualValues(t, 3, got.GetUsage().GetOutputTokens(),
+		"the tokens billed for the silence are what carry the finding")
+}
