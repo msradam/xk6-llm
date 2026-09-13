@@ -461,3 +461,124 @@ func TestPromptMessages_ExcludesSystem(t *testing.T) {
 		require.NotEqual(t, "be terse", m.Parts[0].Text, "system prompt must not appear in Input")
 	}
 }
+
+// exportOnce runs one generation through a real export server and returns the
+// decoded record, so a test can assert on what actually crossed the wire
+// rather than on a helper's return value.
+func exportOnce(t *testing.T, cfg *Agento11yConfig, req *chatRequest, content string) *agento11yv1.Generation {
+	t.Helper()
+
+	var (
+		mu  sync.Mutex
+		got *agento11yv1.Generation
+	)
+	done := make(chan struct{}, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		ereq, err := wire.UnmarshalExportGenerationsJSON(body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		results := make([]*agento11yv1.ExportGenerationResult, 0, len(ereq.GetGenerations()))
+		for _, g := range ereq.GetGenerations() {
+			mu.Lock()
+			got = g
+			mu.Unlock()
+			results = append(results, &agento11yv1.ExportGenerationResult{
+				GenerationId: g.GetId(), Accepted: true,
+			})
+		}
+		payload, _ := wire.MarshalExportGenerationsResponseJSON(
+			&agento11yv1.ExportGenerationsResponse{Results: results})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg.Endpoint = srv.URL
+	cfg.Protocol = "http"
+	cfg.AuthMode = "none"
+	c := &Client{cfg: &Options{Model: "m", Agento11y: cfg}, a11y: newAgento11yClient(cfg)}
+
+	c.exportGeneration(t.Context(), "m", req, &chatResult{
+		GenerationID: "gen-1", TTFT: 10 * time.Millisecond, Content: content,
+		Duration: 100 * time.Millisecond, PromptTokens: 5, CompletionTokens: 3,
+	})
+	require.NoError(t, c.Flush())
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no export received")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotNil(t, got)
+	return got
+}
+
+func sysReq(prompt string) *chatRequest {
+	return &chatRequest{body: map[string]any{
+		"messages": []any{
+			map[string]any{"role": "system", "content": prompt},
+			map[string]any{"role": "user", "content": "hi"},
+		},
+	}}
+}
+
+// TestExportGeneration_VersionIdentityWithoutCapture is the regression test for
+// the failure this whole field exists to prevent.
+//
+// Content capture is off by default, and the collector strips the system prompt
+// in that mode, so leaving version identity to the collector collapsed every
+// agent to one hash of the empty string in the configuration almost everyone
+// runs. Identity therefore has to be derived client-side, and EffectiveVersion
+// is metadata rather than content, so it survives.
+func TestExportGeneration_VersionIdentityWithoutCapture(t *testing.T) {
+	t.Parallel()
+
+	got := exportOnce(t, &Agento11yConfig{Synthetic: true}, sysReq("be terse"), "an answer")
+
+	require.Empty(t, got.GetSystemPrompt(),
+		"the prompt itself must not ship without capture")
+	require.Regexp(t, `^sha256:[0-9a-f]{64}$`, got.GetEffectiveVersion(),
+		"identity ships with capture off, in the shape the collector accepts")
+	require.NotEqual(t, effectiveVersion(""), got.GetEffectiveVersion(),
+		"and it is not the empty-prompt constant every agent used to collapse to")
+}
+
+// TestExportGeneration_VersionTracksPromptNotCaptureMode pins the two
+// properties that make the derived identity usable: a prompt change is a
+// version change, and toggling capture is not.
+func TestExportGeneration_VersionTracksPromptNotCaptureMode(t *testing.T) {
+	t.Parallel()
+
+	off := exportOnce(t, &Agento11yConfig{Synthetic: true}, sysReq("be terse"), "an answer")
+	on := exportOnce(t, &Agento11yConfig{Synthetic: true, CaptureContent: true}, sysReq("be terse"), "an answer")
+	other := exportOnce(t, &Agento11yConfig{Synthetic: true}, sysReq("be verbose"), "an answer")
+
+	require.Equal(t, off.GetEffectiveVersion(), on.GetEffectiveVersion(),
+		"the same prompt is the same agent version whatever the capture mode")
+	require.NotEqual(t, off.GetEffectiveVersion(), other.GetEffectiveVersion(),
+		"a different prompt is a different agent version")
+	require.Equal(t, "be terse", on.GetSystemPrompt(),
+		"and the prompt does ship once capture is on")
+}
+
+// TestExportGeneration_DeclaredVersionWins keeps the derived digest out of the
+// way of a caller who states their own version.
+func TestExportGeneration_DeclaredVersionWins(t *testing.T) {
+	t.Parallel()
+
+	got := exportOnce(t, &Agento11yConfig{Synthetic: true, AgentVersion: "v7"}, sysReq("be terse"), "an answer")
+
+	require.Equal(t, "v7", got.GetAgentVersion())
+	require.Empty(t, got.GetEffectiveVersion(),
+		"a declared version is the caller's, so we must not preempt it")
+}

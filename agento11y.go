@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"sort"
@@ -304,13 +305,27 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 		Tags:        tags,
 		Metadata:    c.generationMetadata(res),
 	}
-	// SystemPrompt is content, and the SDK strips it in metadata-only mode, so
-	// sending it outside capture would be dropped downstream anyway. The
-	// consequence is worth stating plainly: prompt-derived agent versioning is
-	// only available with content capture on.
+	sys := systemPrompt(req)
+
+	// Agent identity must not depend on content capture.
+	//
+	// With no declared agent_version the collector derives a version by
+	// hashing the system prompt, but it only ever sees that prompt under
+	// content capture, which is off by default. Leaving identity to the
+	// collector therefore collapsed every agent to one hash of the empty
+	// string in the default configuration, and toggling capture moved an
+	// unchanged prompt to a different version. Deriving the digest here fixes
+	// both: EffectiveVersion is metadata, so it survives metadata-only mode.
+	//
+	// A declared version is the caller's to own, so this only fills the gap.
+	if acfg.AgentVersion == "" && sys != "" {
+		gen.EffectiveVersion = effectiveVersion(sys)
+	}
+
+	// SystemPrompt is content, so it ships only under capture. The SDK strips
+	// it in metadata-only mode, so sending it otherwise would be dropped
+	// downstream and imply a guarantee that does not hold.
 	if acfg.CaptureContent {
-		sys := systemPrompt(req)
-		start.SystemPrompt = sys
 		gen.SystemPrompt = sys
 		gen.Input = promptMessages(req)
 		gen.Output = []model.Message{{
@@ -449,6 +464,32 @@ func systemPrompt(req *chatRequest) string {
 		}
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// effectiveVersion returns a stable version identity for a system prompt.
+//
+// This is deliberately a digest rather than the prompt itself, even though the
+// SDK hashes the field again on the way out (codec.EffectiveVersionDigest has
+// no already-canonical guard, so the value that reaches the collector is a
+// digest of this digest). Two reasons not to "fix" that by passing the raw
+// prompt:
+//
+//   - One export path ships the field unhashed. otel_export.go assigns
+//     EffectiveVersion straight through, and while xk6-llm never enables otel
+//     mode today, a prompt in that field would leave the process in clear the
+//     day someone does. Content capture is off by default for a reason, and
+//     version identity must not smuggle content past it.
+//   - Nothing downstream needs the preimage. The collector stores the digest
+//     as an opaque catalog key, so double hashing costs nothing and the
+//     property that matters survives: one prompt is one version, every run,
+//     whatever the capture mode.
+//
+// It follows that this digest does not match what a differently instrumented
+// agent reports for the same prompt, which is correct. They are different
+// agents.
+func effectiveVersion(sys string) string {
+	sum := sha256.Sum256([]byte(sys))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // promptMessages converts the request's OpenAI-shaped messages into SDK
