@@ -13,9 +13,9 @@ type Options struct {
 	Model     string
 	Timeout   time.Duration
 	IgnoreEOS bool
-	// Wire selects the request encoding: "openai" (default) or "anthropic".
-	// Set it to drive an Anthropic Messages endpoint, including a gateway that
-	// fronts one.
+	// Wire selects the request encoding: "openai" (default), "anthropic",
+	// "responses", or "providerwire-v4" for AI SDK gateways such as Grafana AI
+	// Gateway.
 	Wire Wire
 	// Headers are sent on every request. Use for custom auth schemes, gateway
 	// routing keys (e.g. OpenRouter "HTTP-Referer"), or observability headers.
@@ -153,11 +153,11 @@ func parseOptions(raw any) (*Options, error) {
 	}
 	if v, ok := m["wire"].(string); ok && v != "" {
 		switch Wire(v) {
-		case WireOpenAI, WireAnthropic, WireResponses:
+		case WireOpenAI, WireAnthropic, WireResponses, WireProviderWireV4:
 			o.Wire = Wire(v)
 		default:
-			return nil, fmt.Errorf("llm.Client: 'wire' must be %q, %q, or %q, got %q",
-				WireOpenAI, WireAnthropic, WireResponses, v)
+			return nil, fmt.Errorf("llm.Client: 'wire' must be %q, %q, %q, or %q, got %q",
+				WireOpenAI, WireAnthropic, WireResponses, WireProviderWireV4, v)
 		}
 	}
 	if v, ok := m["headers"]; ok && v != nil {

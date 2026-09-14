@@ -521,12 +521,18 @@ type sseErrEnvelope struct {
 func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, error) {
 	anthropic := c.cfg.Wire == WireAnthropic
 	responses := c.cfg.Wire == WireResponses
+	v4 := c.cfg.Wire == WireProviderWireV4
 
 	body := req.body
 	if anthropic {
 		body = anthropicBody(body, c.cfg.Model, c.cfg.IgnoreEOS)
 	} else if responses {
 		body = responsesBody(body, c.cfg.Model)
+	} else if v4 {
+		var err error
+		if body, err = providerWireV4Body(body); err != nil {
+			return nil, newChatError(errKindUnsupported, err)
+		}
 	} else {
 		body["model"] = c.cfg.Model
 		body["stream"] = true
@@ -547,6 +553,8 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		path = "/messages"
 	case responses:
 		path = "/responses"
+	case v4:
+		path = "/language-model"
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.cfg.BaseURL+path, bytes.NewReader(payload))
@@ -555,6 +563,11 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
+	if v4 {
+		httpReq.Header.Set("ai-language-model-id", c.cfg.Model)
+		httpReq.Header.Set("ai-language-model-specification-version", "4")
+		httpReq.Header.Set("ai-language-model-streaming", "true")
+	}
 	if anthropic {
 		httpReq.Header.Set("anthropic-version", anthropicVersion)
 		if c.cfg.APIKey != "" {
@@ -601,6 +614,8 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		parse = parseAnthropicStream
 	case responses:
 		parse = parseResponsesStream
+	case v4:
+		parse = parseProviderWireV4Stream
 	}
 	res, err := parse(reqCtx, resp.Body, start, req.abort)
 	if err != nil {

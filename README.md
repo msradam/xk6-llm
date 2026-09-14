@@ -88,6 +88,7 @@ Every metric is tagged `model`. Errors are additionally tagged `error_type`. Per
   timeout_ms?: number,                          // default: 60000
   ignore_eos?: boolean,
   headers?:    Record<string, string>,
+  wire?:       'openai' | 'anthropic' | 'responses' | 'providerwire-v4', // default: openai
   slo?:        { ttft_ms?, tpot_ms?, e2el_ms? },
   cost?:       { usd_per_million_input_tokens?, usd_per_million_output_tokens? },
   energy?:     { j_per_input_token?, j_per_output_token?, idle_w? },
