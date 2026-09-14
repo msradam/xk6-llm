@@ -523,6 +523,137 @@ func exportOnce(t *testing.T, cfg *Agento11yConfig, req *chatRequest, content st
 	return got
 }
 
+// exportOnceResult is exportOnce with the caller supplying the whole result,
+// so a test can export a turn that called tools instead of answering.
+func exportOnceResult(t *testing.T, cfg *Agento11yConfig, req *chatRequest, res *chatResult) *agento11yv1.Generation {
+	t.Helper()
+	var (
+		mu  sync.Mutex
+		got *agento11yv1.Generation
+	)
+	done := make(chan struct{}, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		ereq, err := wire.UnmarshalExportGenerationsJSON(body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		results := make([]*agento11yv1.ExportGenerationResult, 0, len(ereq.GetGenerations()))
+		for _, g := range ereq.GetGenerations() {
+			mu.Lock()
+			got = g
+			mu.Unlock()
+			results = append(results, &agento11yv1.ExportGenerationResult{
+				GenerationId: g.GetId(), Accepted: true,
+			})
+		}
+		payload, _ := wire.MarshalExportGenerationsResponseJSON(
+			&agento11yv1.ExportGenerationsResponse{Results: results})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg.Endpoint = srv.URL
+	cfg.Protocol = "http"
+	cfg.AuthMode = "none"
+	c := &Client{cfg: &Options{Model: "m", Agento11y: cfg}, a11y: newAgento11yClient(cfg)}
+	c.exportGeneration(t.Context(), "m", req, res)
+	require.NoError(t, c.Flush())
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no export received")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotNil(t, got)
+	return got
+}
+
+// A tool call and a tool result have to cross the wire as typed parts, because
+// Sigil's tool_calls projection reads tool_call parts from output and
+// tool_result parts from the next generation's input and ignores text. Flatten
+// them to text and every consumer of that projection sees a conversation that
+// never used a tool, which is what this extension used to export.
+func TestExportGeneration_ToolPartsAreTyped(t *testing.T) {
+	t.Parallel()
+
+	// Turn one: the model asks for evidence and says nothing else.
+	call := exportOnceResult(t, &Agento11yConfig{AgentName: "a", CaptureContent: true},
+		&chatRequest{body: map[string]any{"messages": []any{
+			map[string]any{"role": "user", "content": "why did latency spike"},
+		}}},
+		&chatResult{
+			GenerationID: "gen-call", Content: "",
+			ToolCalls: []ToolCall{{ID: "c1", Name: "query_events", Arguments: `{"window":"1h"}`}},
+		})
+
+	require.Len(t, call.GetOutput(), 1, "a turn that only called a tool still exports output")
+	outPart := call.GetOutput()[0].GetParts()[0]
+	require.NotNil(t, outPart.GetToolCall(), "the call must be a tool_call part, not text")
+	require.Equal(t, "c1", outPart.GetToolCall().GetId())
+	require.Equal(t, "query_events", outPart.GetToolCall().GetName())
+	require.JSONEq(t, `{"window":"1h"}`, string(outPart.GetToolCall().GetInputJson()))
+
+	// Turn two: the result comes back failed, and the script says so.
+	answer := exportOnceResult(t, &Agento11yConfig{AgentName: "a", CaptureContent: true},
+		&chatRequest{body: map[string]any{"messages": []any{
+			map[string]any{"role": "user", "content": "why did latency spike"},
+			map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{
+				map[string]any{"id": "c1", "type": "function", "function": map[string]any{
+					"name": "query_events", "arguments": `{"window":"1h"}`,
+				}},
+			}},
+			map[string]any{"role": "tool", "tool_call_id": "c1", "name": "query_events",
+				"content": "boom", "is_error": true},
+		}}},
+		&chatResult{GenerationID: "gen-answer", Content: "A config regression caused it."})
+
+	var gotCall, gotResult bool
+	for _, msg := range answer.GetInput() {
+		for _, part := range msg.GetParts() {
+			if tc := part.GetToolCall(); tc != nil && tc.GetId() == "c1" {
+				gotCall = true
+			}
+			if tr := part.GetToolResult(); tr != nil && tr.GetToolCallId() == "c1" {
+				gotResult = true
+				require.True(t, tr.GetIsError(), "is_error has to survive: a failure read as sound is the bug")
+				require.Equal(t, "boom", tr.GetContent())
+				require.Equal(t, "query_events", tr.GetName())
+			}
+		}
+	}
+	require.True(t, gotCall, "an assistant turn with null content and tool calls was dropped whole")
+	require.True(t, gotResult, "the tool result must be a typed part")
+}
+
+// Arguments a provider never promised to be valid JSON must not take the whole
+// record down with them.
+func TestExportGeneration_InvalidToolArgumentsStillExport(t *testing.T) {
+	t.Parallel()
+	gen := exportOnceResult(t, &Agento11yConfig{AgentName: "a", CaptureContent: true},
+		&chatRequest{body: map[string]any{"messages": []any{
+			map[string]any{"role": "user", "content": "hi"},
+		}}},
+		&chatResult{
+			GenerationID: "gen-bad", Content: "",
+			ToolCalls: []ToolCall{{ID: "c1", Name: "query_events", Arguments: "not json"}},
+		})
+	require.Len(t, gen.GetOutput(), 1)
+	tc := gen.GetOutput()[0].GetParts()[0].GetToolCall()
+	require.NotNil(t, tc)
+	require.Equal(t, "query_events", tc.GetName())
+	require.Empty(t, tc.GetInputJson(), "unparseable arguments are dropped, the call is not")
+}
+
 func sysReq(prompt string) *chatRequest {
 	return &chatRequest{body: map[string]any{
 		"messages": []any{

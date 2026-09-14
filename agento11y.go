@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -328,17 +329,29 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 	if acfg.CaptureContent {
 		gen.SystemPrompt = sys
 		gen.Input = promptMessages(req)
-		// Only attach a completion when there is one. A text part carrying an
-		// empty string sets no payload field, which fails SDK validation with
+		// Only attach parts that carry something. A text part holding an empty
+		// string sets no payload field, which fails SDK validation with
 		// "generation.output[0].parts[0] must set exactly one payload field"
 		// and drops the entire record. That would silently lose exactly the
 		// case these checks exist to catch: a request that billed for output
 		// and returned no text. The token counts carry it instead.
+		var outParts []model.Part
 		if res.Content != "" {
-			gen.Output = []model.Message{{
-				Role:  model.RoleAssistant,
-				Parts: []model.Part{{Kind: model.PartKindText, Text: res.Content}},
-			}}
+			outParts = append(outParts, model.Part{Kind: model.PartKindText, Text: res.Content})
+		}
+		// A tool call is the only record that the model asked for evidence. It
+		// belongs on the output side: Sigil's tool_calls projection reads calls
+		// from output and results from the *next* generation's input, and an
+		// agentic turn often has no text at all, so without this the turn
+		// exports as an empty generation.
+		for _, tc := range res.ToolCalls {
+			outParts = append(outParts, model.Part{
+				Kind:     model.PartKindToolCall,
+				ToolCall: &model.ToolCall{ID: tc.ID, Name: tc.Name, InputJSON: rawJSON(tc.Arguments)},
+			})
+		}
+		if len(outParts) > 0 {
+			gen.Output = []model.Message{{Role: model.RoleAssistant, Parts: outParts}}
 		}
 	}
 
@@ -520,10 +533,6 @@ func promptMessages(req *chatRequest) []model.Message {
 		if m["role"] == "system" {
 			continue
 		}
-		text, ok := m["content"].(string)
-		if !ok {
-			continue
-		}
 		role := model.RoleUser
 		switch m["role"] {
 		case "assistant":
@@ -531,12 +540,84 @@ func promptMessages(req *chatRequest) []model.Message {
 		case "tool":
 			role = model.RoleTool
 		}
-		out = append(out, model.Message{
-			Role:  role,
-			Parts: []model.Part{{Kind: model.PartKindText, Text: text}},
-		})
+		parts := messageParts(m, role)
+		if len(parts) == 0 {
+			continue
+		}
+		out = append(out, model.Message{Role: role, Parts: parts})
 	}
 	return out
+}
+
+// messageParts converts one OpenAI-shaped message into SDK parts.
+//
+// A tool result and a tool call are typed parts rather than text, because
+// Sigil's tool_calls projection reads the typed fields and ignores text. A
+// result flattened to text is a result that never arrived as far as any
+// consumer of that projection is concerned.
+func messageParts(m map[string]any, role model.Role) []model.Part {
+	if role == model.RoleTool {
+		// The call id is the correlation key. Without it the result cannot be
+		// matched to its call, so a text part is the honest shape.
+		id, _ := m["tool_call_id"].(string)
+		content, _ := m["content"].(string)
+		if id == "" {
+			if content == "" {
+				return nil
+			}
+			return []model.Part{{Kind: model.PartKindText, Text: content}}
+		}
+		name, _ := m["name"].(string)
+		// is_error has no place in OpenAI's wire format, so the script says
+		// so. Inferring it from the content would be guesswork, and a result
+		// wrongly marked sound is the failure this whole path exists to catch.
+		isError, _ := m["is_error"].(bool)
+		return []model.Part{{
+			Kind: model.PartKindToolResult,
+			ToolResult: &model.ToolResult{
+				ToolCallID: id, Name: name, IsError: isError, Content: content,
+			},
+		}}
+	}
+
+	var parts []model.Part
+	if text, ok := m["content"].(string); ok && text != "" {
+		parts = append(parts, model.Part{Kind: model.PartKindText, Text: text})
+	}
+	// An assistant turn that only called tools has null content, so it used to
+	// be dropped whole along with its calls.
+	calls, _ := asAnySlice(m["tool_calls"])
+	for _, raw := range calls {
+		tc, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		fn, _ := tc["function"].(map[string]any)
+		if fn == nil {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		if name == "" {
+			continue
+		}
+		id, _ := tc["id"].(string)
+		args, _ := fn["arguments"].(string)
+		parts = append(parts, model.Part{
+			Kind:     model.PartKindToolCall,
+			ToolCall: &model.ToolCall{ID: id, Name: name, InputJSON: rawJSON(args)},
+		})
+	}
+	return parts
+}
+
+// rawJSON passes through valid JSON and drops anything else. A provider can
+// return arguments that do not parse, and an invalid RawMessage fails the
+// whole export rather than just that field.
+func rawJSON(s string) json.RawMessage {
+	if s == "" || !json.Valid([]byte(s)) {
+		return nil
+	}
+	return json.RawMessage(s)
 }
 
 // Flush exports any queued generation records.
