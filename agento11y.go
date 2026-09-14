@@ -305,6 +305,7 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 		CompletedAt: startedAt.Add(res.Duration),
 		Tags:        tags,
 		Metadata:    c.generationMetadata(res),
+		Tools:       toolDefinitions(req),
 	}
 	sys := systemPrompt(req)
 
@@ -466,6 +467,69 @@ func msOf(d time.Duration) float64 {
 // compare. Two wire shapes produce it: an OpenAI `role: system` message, or
 // the top-level `system` field the Anthropic and Responses translation layers
 // hoist it into.
+// toolDefinitions lifts the tools the model was offered out of the request so
+// the catalog records what an agent could call, not only what it did call.
+//
+// Tool calls already reach Sigil as typed parts, but a call is evidence after
+// the fact: an agent offered five tools and using one looks identical to an
+// agent that only has one. The catalog counts tools per version and its
+// version delta reports tool changes, and neither can work from calls alone.
+//
+// Set unconditionally. The SDK owns the privacy question and strips the
+// description and input schema in metadata-only mode while keeping the name
+// and type, which is the same split it applies to a system prompt.
+func toolDefinitions(req *chatRequest) []model.ToolDefinition {
+	raw, ok := asAnySlice(req.body["tools"])
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+
+	out := make([]model.ToolDefinition, 0, len(raw))
+	for _, entry := range raw {
+		tool, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		// OpenAI and Responses nest the declaration under "function";
+		// Anthropic puts name, description and input_schema at the top level.
+		spec := tool
+		if fn, ok := tool["function"].(map[string]any); ok {
+			spec = fn
+		}
+		name, _ := spec["name"].(string)
+		if name == "" {
+			// A tool with no name is not addressable, so recording it would
+			// add a row nothing can join on.
+			continue
+		}
+		def := model.ToolDefinition{Name: name}
+		if s, ok := spec["description"].(string); ok {
+			def.Description = s
+		}
+		if s, ok := tool["type"].(string); ok {
+			def.Type = s
+		} else if _, nested := tool["function"]; nested {
+			def.Type = "function"
+		}
+		// The schema key differs by wire: "parameters" on OpenAI, and
+		// "input_schema" on Anthropic.
+		schema, ok := spec["parameters"]
+		if !ok {
+			schema, ok = spec["input_schema"]
+		}
+		if ok {
+			if encoded, err := json.Marshal(schema); err == nil {
+				def.InputSchema = encoded
+			}
+		}
+		out = append(out, def)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func systemPrompt(req *chatRequest) string {
 	if s, ok := req.body["system"].(string); ok && s != "" {
 		return s

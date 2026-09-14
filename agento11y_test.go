@@ -735,3 +735,97 @@ func TestExportGeneration_EmptyCompletionStillExports(t *testing.T) {
 	require.EqualValues(t, 3, got.GetUsage().GetOutputTokens(),
 		"the tokens billed for the silence are what carry the finding")
 }
+
+// Tool definitions describe what the agent could call. Without them the
+// catalog cannot count tools per version or report a tool change, because a
+// tool call only proves what was used.
+func TestToolDefinitions_OpenAIShape(t *testing.T) {
+	req := &chatRequest{body: map[string]any{"tools": []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "lookup_doc",
+				"description": "Fetch a knowledge base document by id.",
+				"parameters":  map[string]any{"type": "object"},
+			},
+		},
+	}}}
+
+	got := toolDefinitions(req)
+	if len(got) != 1 {
+		t.Fatalf("got %d definitions, want 1", len(got))
+	}
+	if got[0].Name != "lookup_doc" {
+		t.Errorf("name = %q", got[0].Name)
+	}
+	if got[0].Type != "function" {
+		t.Errorf("type = %q, want function", got[0].Type)
+	}
+	if got[0].Description == "" {
+		t.Error("description was dropped")
+	}
+	if string(got[0].InputSchema) != `{"type":"object"}` {
+		t.Errorf("input schema = %s", got[0].InputSchema)
+	}
+}
+
+// Anthropic declares a tool flat, with input_schema instead of parameters.
+func TestToolDefinitions_AnthropicShape(t *testing.T) {
+	req := &chatRequest{body: map[string]any{"tools": []any{
+		map[string]any{
+			"name":         "get_weather",
+			"description":  "Current conditions.",
+			"input_schema": map[string]any{"type": "object"},
+		},
+	}}}
+
+	got := toolDefinitions(req)
+	if len(got) != 1 {
+		t.Fatalf("got %d definitions, want 1", len(got))
+	}
+	if got[0].Name != "get_weather" {
+		t.Errorf("name = %q", got[0].Name)
+	}
+	if string(got[0].InputSchema) != `{"type":"object"}` {
+		t.Errorf("input schema = %s", got[0].InputSchema)
+	}
+}
+
+func TestToolDefinitions_SkipsUnusableEntries(t *testing.T) {
+	req := &chatRequest{body: map[string]any{"tools": []any{
+		map[string]any{"function": map[string]any{"description": "no name"}},
+		"not an object",
+		map[string]any{"name": "ok"},
+	}}}
+
+	got := toolDefinitions(req)
+	if len(got) != 1 || got[0].Name != "ok" {
+		t.Fatalf("got %+v, want only the named tool", got)
+	}
+}
+
+func TestToolDefinitions_NilWhenNoToolsWereOffered(t *testing.T) {
+	if got := toolDefinitions(&chatRequest{body: map[string]any{}}); got != nil {
+		t.Errorf("got %+v, want nil", got)
+	}
+	if got := toolDefinitions(&chatRequest{body: map[string]any{"tools": []any{}}}); got != nil {
+		t.Errorf("empty tools should give nil, got %+v", got)
+	}
+}
+
+// The exported record has to carry them, since that is the whole point.
+func TestExportGeneration_CarriesToolDefinitions(t *testing.T) {
+	req := sysReq("You are terse.")
+	req.body["tools"] = []any{map[string]any{
+		"type":     "function",
+		"function": map[string]any{"name": "lookup_doc", "parameters": map[string]any{"type": "object"}},
+	}}
+
+	gen := exportOnce(t, &Agento11yConfig{Synthetic: true, CaptureContent: true}, req, "answered")
+	if len(gen.Tools) != 1 {
+		t.Fatalf("exported %d tools, want 1", len(gen.Tools))
+	}
+	if gen.Tools[0].Name != "lookup_doc" {
+		t.Errorf("exported tool name = %q", gen.Tools[0].Name)
+	}
+}
