@@ -97,7 +97,7 @@ Every metric is tagged `model`. Errors are additionally tagged `error_type`. Per
 
 ### `client.chat(req)`
 
-`req` accepts the OpenAI chat-completion fields (`messages`, `max_tokens`, `temperature`, `top_p`, `seed`, etc.) plus optional `slo`, `cache_state`, and `tags`. Returns a Promise resolving to:
+`req` accepts the OpenAI chat-completion fields (`messages`, `max_tokens`, `temperature`, `top_p`, `seed`, etc.) plus optional `slo`, `cache_state`, `tags` and `stream`. Returns a Promise resolving to:
 
 ```ts
 {
@@ -111,8 +111,19 @@ Every metric is tagged `model`. Errors are additionally tagged `error_type`. Per
   prompt_tokens:       number,
   completion_tokens:   number,
   finish_reason:       string,
+  stream:              boolean,  // false for a unary call
 }
 ```
+
+Calls stream by default. Set `stream: false` for a unary call: the request is
+sent without streaming on every wire (`ai-language-model-streaming: false` on
+`providerwire-v4`) and the whole response is parsed at once. A unary call
+reports `llm_requests`, `llm_errors`, `llm_request_duration`,
+`llm_response_headers`, token counts, cost, energy and the `e2el_ms` SLO, all
+tagged `mode=unary`. It does not report `llm_ttft`, `llm_itl`, `llm_tpot` or
+`llm_chunks_per_request`, and a `ttft_ms` or `tpot_ms` SLO is not evaluated
+for it. `abort_after_tokens` requires a streamed call; `abort_after_ms` works
+for both.
 
 ### `new llm.Dataset(opts)`
 

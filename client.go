@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,6 +125,9 @@ type chatRequest struct {
 	// workload knows its own graph; a proxy observing stateless HTTP requests
 	// cannot reconstruct it, which is why this has to come from the client.
 	parentGenerationIDs []string
+	// unary is true when the caller set stream: false. The request is sent
+	// without streaming and the whole response is parsed at once.
+	unary bool
 }
 
 // abortPolicy bounds how long / how many tokens we consume before cancelling
@@ -142,6 +146,7 @@ var controlKeys = map[string]bool{
 	"abort_after_tokens":    true,
 	"generation_id":         true,
 	"parent_generation_ids": true,
+	"stream":                true,
 }
 
 // ToolCall is one assembled tool invocation from a streamed assistant turn.
@@ -195,8 +200,11 @@ type chatResult struct {
 	TTFText      time.Duration
 	FinishReason string
 	ToolCalls    []ToolCall
-	Aborted      bool          // true when the stream was cut short by abort_after_ms or abort_after_tokens
-	SLO          *SLOPredicate // copied from request; used by emit() to decide which Rates to push
+	Aborted      bool // true when the stream was cut short by abort_after_ms or abort_after_tokens
+	// Unary is true for a stream: false call. TTFT, ITL, TPOT and Chunks are
+	// not measured for it.
+	Unary bool
+	SLO   *SLOPredicate // copied from request; used by emit() to decide which Rates to push
 }
 
 // sloOutcome reports the per-dimension SLO results and whether every
@@ -216,7 +224,7 @@ func (r *chatResult) sloOutcome() sloOutcome {
 	if r.SLO == nil || r.SLO.Empty() {
 		return out
 	}
-	if r.SLO.TTFTMs > 0 {
+	if r.SLO.TTFTMs > 0 && !r.Unary {
 		out.TTFTChecked = true
 		out.TTFTPass = float64(r.TTFT)/float64(time.Millisecond) <= r.SLO.TTFTMs
 		out.AllPass = out.AllPass && out.TTFTPass
@@ -308,6 +316,7 @@ func (r *chatResult) toJSObject() map[string]any {
 		out["tpot_ms"] = 0.0
 	}
 	out["aborted"] = r.Aborted
+	out["stream"] = !r.Unary
 	if len(r.ToolCalls) > 0 {
 		tcs := make([]map[string]any, len(r.ToolCalls))
 		for i, tc := range r.ToolCalls {
@@ -324,7 +333,7 @@ func (r *chatResult) toJSObject() map[string]any {
 	return out
 }
 
-// Chat sends a streaming chat completion request. Returns a Promise resolving to
+// Chat sends a chat completion request, streamed unless stream: false is set. Returns a Promise resolving to
 // a result object (see chatResult.toJSObject for the full shape) or rejecting
 // with the categorized error.
 //
@@ -336,6 +345,7 @@ func (r *chatResult) toJSObject() map[string]any {
 //	  // control fields (peeled off before the upstream POST):
 //	  slo:         { ttft_ms: 500, tpot_ms: 50, e2el_ms: 5000 },
 //	  cache_state: "cold",
+//	  stream:      false, // unary call; no TTFT, ITL or TPOT
 //	  tags:        { region: "us-east", shape: "short" },
 //	})
 func (c *Client) Chat(req map[string]any) *sobek.Promise {
@@ -421,6 +431,16 @@ func (c *Client) parseChatRequest(raw map[string]any) (*chatRequest, error) {
 		}
 		req.abort.MaxTokens = int(f)
 	}
+	if v, ok := raw["stream"]; ok && v != nil {
+		b, ok := v.(bool)
+		if !ok {
+			return nil, fmt.Errorf("llm: stream must be a boolean, got %T", v)
+		}
+		req.unary = !b
+	}
+	if req.unary && req.abort.MaxTokens > 0 {
+		return nil, errors.New("llm: abort_after_tokens requires a streamed call; use abort_after_ms with stream: false")
+	}
 	if v, ok := raw["tags"]; ok && v != nil {
 		m, ok := v.(map[string]any)
 		if !ok {
@@ -440,13 +460,16 @@ func (c *Client) parseChatRequest(raw map[string]any) (*chatRequest, error) {
 
 // tagSet returns request-scoped tags (cache_state + user tags) merged.
 func (p *chatRequest) tagSet() map[string]string {
-	if p.cacheState == "" && len(p.tags) == 0 {
+	if p.cacheState == "" && len(p.tags) == 0 && !p.unary {
 		return nil
 	}
-	out := make(map[string]string, len(p.tags)+1)
+	out := make(map[string]string, len(p.tags)+2)
 	maps.Copy(out, p.tags)
 	if p.cacheState != "" {
 		out["cache_state"] = p.cacheState
+	}
+	if p.unary {
+		out["mode"] = "unary"
 	}
 	return out
 }
@@ -522,6 +545,7 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 	anthropic := c.cfg.Wire == WireAnthropic
 	responses := c.cfg.Wire == WireResponses
 	v4 := c.cfg.Wire == WireProviderWireV4
+	unary := req.unary
 
 	body := req.body
 	if anthropic {
@@ -535,11 +559,16 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		}
 	} else {
 		body["model"] = c.cfg.Model
-		body["stream"] = true
-		body["stream_options"] = map[string]any{"include_usage": true}
+		if !unary {
+			body["stream"] = true
+			body["stream_options"] = map[string]any{"include_usage": true}
+		}
 		if c.cfg.IgnoreEOS {
 			body["ignore_eos"] = true
 		}
+	}
+	if unary && (anthropic || responses) {
+		body["stream"] = false
 	}
 
 	payload, err := json.Marshal(body)
@@ -562,11 +591,15 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		return nil, newChatError(errKindNetwork, fmt.Errorf("build request: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
+	if unary {
+		httpReq.Header.Set("Accept", "application/json")
+	} else {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
 	if v4 {
 		httpReq.Header.Set("ai-language-model-id", c.cfg.Model)
 		httpReq.Header.Set("ai-language-model-specification-version", "4")
-		httpReq.Header.Set("ai-language-model-streaming", "true")
+		httpReq.Header.Set("Ai-Language-Model-Streaming", strconv.FormatBool(!unary))
 	}
 	if anthropic {
 		httpReq.Header.Set("anthropic-version", anthropicVersion)
@@ -606,6 +639,23 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 			kind = errKindHTTP5xx
 		}
 		return nil, newChatError(kind, fmt.Errorf("http %d: %s", resp.StatusCode, bytes.TrimSpace(raw)))
+	}
+
+	if unary {
+		raw, err := readUnaryBody(resp.Body)
+		if err != nil {
+			if req.abort.MaxDuration > 0 && reqCtx.Err() != nil {
+				return &chatResult{Unary: true, Aborted: true, Duration: time.Since(start), ResponseHeaders: headersAt.Sub(start)}, nil
+			}
+			return nil, newChatError(classifyTransportError(err), fmt.Errorf("read response: %w", err))
+		}
+		res, err := unaryParserFor(c.cfg.Wire)(raw)
+		if err != nil {
+			return nil, newChatError(errKindDecode, err)
+		}
+		res.Duration = time.Since(start)
+		res.ResponseHeaders = headersAt.Sub(start)
+		return res, nil
 	}
 
 	parse := parseStream

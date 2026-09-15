@@ -131,12 +131,14 @@ func (c *Client) emit(ctx context.Context, model string, r *chatResult, extraTag
 			Value:      metrics.D(r.Duration),
 			Metadata:   ctm.Metadata,
 		},
-		{
+	}
+	if !r.Unary {
+		samples = append(samples, metrics.Sample{
 			Time:       now,
 			TimeSeries: metrics.TimeSeries{Metric: mx.Chunks, Tags: tags},
 			Value:      float64(r.Chunks),
 			Metadata:   ctm.Metadata,
-		},
+		})
 	}
 	if r.ResponseHeaders > 0 {
 		samples = append(samples, metrics.Sample{
