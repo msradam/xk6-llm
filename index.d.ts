@@ -115,6 +115,9 @@ declare module 'k6/x/llm' {
     seed?: number;
     /** OpenAI tool definitions. The model may respond with tool_calls. */
     tools?: ToolDefinition[];
+    /** Passed through on the OpenAI and Responses wires; on the Anthropic wire
+     *  a json_schema format becomes output_config.format. */
+    response_format?: { type: 'json_schema'; json_schema: { name: string; schema: Record<string, unknown>; strict?: boolean } } | { type: 'json_object' } | { type: 'text' };
     tool_choice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } };
 
     /** Per-call SLO override. Falls back to ClientOptions.slo when absent. */
@@ -201,6 +204,16 @@ declare module 'k6/x/llm' {
     ratelimit_remaining_requests: number;
     /** Remaining token quota the provider reported, or -1 when not reported. */
     ratelimit_remaining_tokens: number;
+    /** The provider's own USD charge (OpenRouter usage.cost). 0 when absent.
+     *  When present it is what llm_cost_usd reports. */
+    server_cost_usd: number;
+    /** Server-reported prefill time (llama.cpp timings.prompt_ms). 0 when absent. */
+    server_prefill_ms: number;
+    /** Server-reported decode time (llama.cpp timings.predicted_ms). 0 when absent. */
+    server_decode_ms: number;
+    /** Speculative-decoding draft tokens the server reported, and how many were accepted. */
+    draft_tokens: number;
+    draft_accepted: number;
   }
 
   export interface EmbedRequest {

@@ -212,8 +212,8 @@ func (c *Client) emit(ctx context.Context, model string, r *chatResult, extraTag
 		s.addBool(mx.Goodput, slo.AllPass)
 	}
 
-	if cm := c.cfg.Cost; !cm.Empty() {
-		s.add(mx.CostUSD, cm.USD(r.PromptTokens, r.CompletionTokens))
+	if usd, ok := c.costOf(r); ok {
+		s.add(mx.CostUSD, usd)
 	}
 
 	if em := c.cfg.Energy; !em.Empty() {
@@ -261,4 +261,16 @@ func (c *Client) emitEmbed(ctx context.Context, r *embedResult, extraTags map[st
 		s.add(mx.EmbedTokens, float64(r.PromptTokens))
 	}
 	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{Samples: s.samples})
+}
+
+// costOf returns the USD cost of a call: the provider's own figure when it
+// reported one, otherwise the client-side model, otherwise nothing.
+func (c *Client) costOf(r *chatResult) (float64, bool) {
+	if r.ServerCost > 0 {
+		return r.ServerCost, true
+	}
+	if cm := c.cfg.Cost; !cm.Empty() {
+		return cm.USD(r.PromptTokens, r.CompletionTokens), true
+	}
+	return 0, false
 }

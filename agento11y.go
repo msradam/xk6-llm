@@ -106,6 +106,14 @@ const (
 	// which subtracted from the client-side duration isolates the network and
 	// gateway share of latency.
 	MetaServerProcessingMs = "llm.server_processing_ms"
+	// MetaServerPrefillMs and MetaServerDecodeMs carry the server's own
+	// prefill and decode split when it reports one per request (llama.cpp).
+	MetaServerPrefillMs = "llm.server_prefill_ms"
+	MetaServerDecodeMs  = "llm.server_decode_ms"
+	// MetaDraftTokens and MetaDraftAccepted carry speculative-decoding draft
+	// counts when the server reports them per request.
+	MetaDraftTokens   = "llm.draft_tokens"   // #nosec G101 -- a metadata key name, not a credential
+	MetaDraftAccepted = "llm.draft_accepted" // #nosec G101 -- a metadata key name, not a credential
 )
 
 // parseParentIDs accepts a single id or an array of ids.
@@ -505,8 +513,16 @@ func (c *Client) generationMetadata(res *chatResult) map[string]any {
 	if res.ServerProcessing > 0 {
 		meta[MetaServerProcessingMs] = msOf(res.ServerProcessing)
 	}
-	if !c.cfg.Cost.Empty() {
-		meta[MetaCostUSD] = c.cfg.Cost.USD(res.PromptTokens, res.CompletionTokens)
+	if usd, ok := c.costOf(res); ok {
+		meta[MetaCostUSD] = usd
+	}
+	if res.ServerPrefill > 0 || res.ServerDecode > 0 {
+		meta[MetaServerPrefillMs] = msOf(res.ServerPrefill)
+		meta[MetaServerDecodeMs] = msOf(res.ServerDecode)
+	}
+	if res.DraftTokens > 0 {
+		meta[MetaDraftTokens] = res.DraftTokens
+		meta[MetaDraftAccepted] = res.DraftAccepted
 	}
 	if !c.cfg.Energy.Empty() {
 		meta[MetaEnergyJ] = c.cfg.Energy.Joules(res.PromptTokens, res.CompletionTokens, res.Duration)

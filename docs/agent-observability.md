@@ -74,7 +74,9 @@ The Generation schema records time to first token and total duration but nothing
 | `llm.thinking_tokens`, `llm.cached_tokens` | Token sub-buckets, duplicated here for consumers that only read metadata. |
 | `llm.response_headers_ms` | Submit to response headers. |
 | `llm.server_processing_ms` | The provider's `openai-processing-ms`, when sent. Subtracted from the duration it isolates network and gateway time. |
-| `llm.cost_usd`, `llm.energy_j` | Present when the client has a `cost` or `energy` model. |
+| `llm.cost_usd`, `llm.energy_j` | Present when the client has a `cost` or `energy` model. Cost uses the provider's own `usage.cost` when one is reported. |
+| `llm.server_prefill_ms`, `llm.server_decode_ms` | The server's own prefill and decode split, from servers that report it per request (llama.cpp `timings`). |
+| `llm.draft_tokens`, `llm.draft_accepted` | Speculative-decoding draft counts, when the server reports them per request. |
 | `llm.goodput` | Whether every configured SLO passed. Computed by the same function that emits the k6 Rate samples, so the two cannot disagree. |
 | `llm.aborted` | Present when `abort_after_ms` or `abort_after_tokens` cut the stream. |
 | `llm.error_type` | The k6 `error_type` of a failed call: `network`, `timeout`, `http_4xx`, `http_5xx`, `stream`, `decode` or `unsupported`. Metadata is not filtered by capture mode, so this survives when the error text does not. |

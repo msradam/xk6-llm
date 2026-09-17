@@ -85,8 +85,9 @@ type chatCompletionResponse struct {
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
-	Usage *sseUsage `json:"usage"`
-	Error *struct {
+	Usage   *sseUsage      `json:"usage"`
+	Timings *serverTimings `json:"timings"`
+	Error   *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
@@ -104,16 +105,8 @@ func parseChatCompletion(raw []byte) (*chatResult, error) {
 		return nil, errors.New("decode response: no choices")
 	}
 	res := &chatResult{Unary: true}
-	if u := body.Usage; u != nil {
-		res.PromptTokens = u.PromptTokens
-		res.CompletionTokens = u.CompletionTokens
-		if d := u.CompletionTokensDetails; d != nil {
-			res.ThinkingTokens = d.ReasoningTokens
-		}
-		if d := u.PromptTokensDetails; d != nil {
-			res.CachedTokens = d.CachedTokens
-		}
-	}
+	body.Usage.apply(res)
+	body.Timings.apply(res)
 	choice := body.Choices[0]
 	res.FinishReason = choice.FinishReason
 	res.Content = textFromContent(choice.Message.Content)

@@ -56,6 +56,8 @@ Scripts always write OpenAI-shaped requests. The `wire` option picks the encodin
 | `responses` | `POST {base_url}/responses` | OpenAI Responses API |
 | `providerwire-v4` | `POST {base_url}/language-model` | AI SDK gateways such as [Grafana AI Gateway](https://github.com/grafana/ai-sdk/tree/main/ai-gateway) |
 
+On the Anthropic wire an OpenAI `response_format` of type `json_schema` becomes `output_config.format`; `json_object` has no equivalent and is dropped.
+
 Every wire measures the same things the same way: TTFT at the first content-bearing event (reasoning included), ITL between text deltas, token counts from the server's usage report. Reasoning models report `thinking_tokens` and `ttf_text_ms` so TPOT is computed over the text phase only.
 
 ## Metrics
@@ -153,8 +155,15 @@ Returns a Promise resolving to:
   server_processing_ms: number,   // openai-processing-ms, 0 when not sent
   ratelimit_remaining_requests: number, // -1 when not reported
   ratelimit_remaining_tokens:   number, // -1 when not reported
+  server_cost_usd:     number,    // provider-reported charge (OpenRouter usage.cost), 0 when absent
+  server_prefill_ms:   number,    // server-reported prefill time (llama.cpp timings), 0 when absent
+  server_decode_ms:    number,    // server-reported decode time, 0 when absent
+  draft_tokens:        number,    // speculative-decoding draft tokens, when reported
+  draft_accepted:      number,    // of which accepted
 }
 ```
+
+When a provider reports its own charge, `llm_cost_usd` uses it and the client-side `cost` model is not applied. llama.cpp sends `timings` when the request sets `timings_per_token: true`.
 
 A 429 error message carries the `retry-after` header value when the provider sends one. Request fields the extension does not know about pass through unchanged on the OpenAI wire, so `response_format`, `prompt_cache_key`, vLLM's `cache_salt` and similar provider knobs work without support here.
 

@@ -228,7 +228,19 @@ type chatResult struct {
 	// A canary that watches these sees a limit coming before it is hit.
 	RateLimitRemainingRequests int
 	RateLimitRemainingTokens   int
-	SLO                        *SLOPredicate // copied from request; used by emit() to decide which Rates to push
+	// ServerCost is the provider's own USD charge when it reports one
+	// (OpenRouter usage.cost). It takes precedence over the cost model.
+	ServerCost float64
+	// ServerPrefill and ServerDecode are the server's own prefill and decode
+	// times when it reports them per request (llama.cpp timings). Zero
+	// otherwise.
+	ServerPrefill time.Duration
+	ServerDecode  time.Duration
+	// DraftTokens and DraftAccepted are speculative-decoding counts when the
+	// server reports them per request (llama.cpp draft_n, draft_n_accepted).
+	DraftTokens   int
+	DraftAccepted int
+	SLO           *SLOPredicate // copied from request; used by emit() to decide which Rates to push
 }
 
 // sloOutcome reports the per-dimension SLO results and whether every
@@ -343,6 +355,11 @@ func (r *chatResult) toJSObject() map[string]any {
 	out["server_processing_ms"] = float64(r.ServerProcessing) / float64(time.Millisecond)
 	out["ratelimit_remaining_requests"] = r.RateLimitRemainingRequests
 	out["ratelimit_remaining_tokens"] = r.RateLimitRemainingTokens
+	out["server_cost_usd"] = r.ServerCost
+	out["server_prefill_ms"] = float64(r.ServerPrefill) / float64(time.Millisecond)
+	out["server_decode_ms"] = float64(r.ServerDecode) / float64(time.Millisecond)
+	out["draft_tokens"] = r.DraftTokens
+	out["draft_accepted"] = r.DraftAccepted
 	if len(r.ToolCalls) > 0 {
 		tcs := make([]map[string]any, len(r.ToolCalls))
 		for i, tc := range r.ToolCalls {
@@ -561,11 +578,56 @@ type sseUsage struct {
 	PromptTokensDetails *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details,omitempty"`
+	// Cost is the provider's own charge for the call in USD. OpenRouter sends
+	// it on every response; a gateway that meters may too. When present it
+	// is the truth and the client-side cost model is not used.
+	Cost float64 `json:"cost,omitempty"`
+}
+
+// apply copies a usage report onto the result. Every OpenAI-shaped wire
+// reads usage the same way, streamed or not.
+func (u *sseUsage) apply(res *chatResult) {
+	if u == nil {
+		return
+	}
+	res.PromptTokens = u.PromptTokens
+	res.CompletionTokens = u.CompletionTokens
+	if d := u.CompletionTokensDetails; d != nil {
+		res.ThinkingTokens = d.ReasoningTokens
+	}
+	if d := u.PromptTokensDetails; d != nil {
+		res.CachedTokens = d.CachedTokens
+	}
+	res.ServerCost = u.Cost
+}
+
+// serverTimings is llama.cpp's per-request timing report, sent on the final
+// chunk when the request sets timings_per_token: true. It is the only
+// OpenAI-compatible server that reports prefill and decode time per request
+// rather than as a histogram on /metrics, and the draft counts are the only
+// client-readable speculative-decoding acceptance figure outside vLLM's
+// experimental metrics.
+type serverTimings struct {
+	PromptMs       float64 `json:"prompt_ms"`
+	PredictedMs    float64 `json:"predicted_ms"`
+	DraftN         int     `json:"draft_n"`
+	DraftNAccepted int     `json:"draft_n_accepted"`
+}
+
+func (t *serverTimings) apply(res *chatResult) {
+	if t == nil {
+		return
+	}
+	res.ServerPrefill = time.Duration(t.PromptMs * float64(time.Millisecond))
+	res.ServerDecode = time.Duration(t.PredictedMs * float64(time.Millisecond))
+	res.DraftTokens = t.DraftN
+	res.DraftAccepted = t.DraftNAccepted
 }
 
 type sseChunk struct {
-	Choices []sseChoice `json:"choices"`
-	Usage   *sseUsage   `json:"usage,omitempty"`
+	Choices []sseChoice    `json:"choices"`
+	Usage   *sseUsage      `json:"usage,omitempty"`
+	Timings *serverTimings `json:"timings,omitempty"`
 }
 
 type sseErrEnvelope struct {
@@ -849,16 +911,8 @@ func parseStream(reqCtx context.Context, r io.Reader, start time.Time, abort abo
 			return nil, fmt.Errorf("decode chunk: %w (data=%q)", err, data)
 		}
 
-		if chunk.Usage != nil {
-			res.PromptTokens = chunk.Usage.PromptTokens
-			res.CompletionTokens = chunk.Usage.CompletionTokens
-			if d := chunk.Usage.CompletionTokensDetails; d != nil {
-				res.ThinkingTokens = d.ReasoningTokens
-			}
-			if d := chunk.Usage.PromptTokensDetails; d != nil {
-				res.CachedTokens = d.CachedTokens
-			}
-		}
+		chunk.Usage.apply(res)
+		chunk.Timings.apply(res)
 		if len(chunk.Choices) == 0 {
 			continue
 		}

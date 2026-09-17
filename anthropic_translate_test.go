@@ -289,3 +289,26 @@ func asList(t *testing.T, v any) []any {
 	require.True(t, ok, "want []any, got %T", v)
 	return l
 }
+
+func TestAnthropicBody_ResponseFormatBecomesOutputConfig(t *testing.T) {
+	t.Parallel()
+	schema := map[string]any{"type": "object", "properties": map[string]any{"ok": map[string]any{"type": "boolean"}}}
+	out := anthropicBody(map[string]any{
+		"messages":        []any{map[string]any{"role": "user", "content": "hi"}},
+		"response_format": map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "r", "schema": schema}},
+	}, "m", false)
+	_, leaked := out["response_format"]
+	require.False(t, leaked, "Anthropic rejects unknown top-level fields")
+	cfg := asMap(t, out["output_config"])
+	format := asMap(t, cfg["format"])
+	require.Equal(t, "json_schema", format["type"])
+	require.Equal(t, schema, format["schema"])
+
+	// json_object has no schema to carry and is dropped rather than sent.
+	out = anthropicBody(map[string]any{
+		"messages":        []any{map[string]any{"role": "user", "content": "hi"}},
+		"response_format": map[string]any{"type": "json_object"},
+	}, "m", false)
+	_, has := out["output_config"]
+	require.False(t, has)
+}

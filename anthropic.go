@@ -90,6 +90,10 @@ func anthropicBody(body map[string]any, model string, ignoreEOS bool) map[string
 			out[k] = translateTools(v)
 		case "tool_choice":
 			out[k] = translateToolChoice(v)
+		case "response_format":
+			if cfg, ok := translateResponseFormat(v); ok {
+				out["output_config"] = cfg
+			}
 		default:
 			out[k] = v
 		}

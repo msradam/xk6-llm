@@ -49,7 +49,6 @@ var openAIOnlyFields = map[string]bool{
 	"prediction":          true,
 	"presence_penalty":    true,
 	"reasoning_effort":    true,
-	"response_format":     true,
 	"seed":                true,
 	"service_tier":        true,
 	"store":               true,
@@ -254,4 +253,21 @@ func decodeToolArguments(raw any) map[string]any {
 		return out
 	}
 	return map[string]any{}
+}
+
+// translateResponseFormat converts an OpenAI response_format into the
+// Messages output_config.format, which went GA on 2026-01-29. Only the
+// json_schema form has an equivalent; json_object and text carry no schema
+// and are dropped, since Anthropic rejects unknown fields.
+func translateResponseFormat(raw any) (any, bool) {
+	rf, ok := raw.(map[string]any)
+	if !ok || rf["type"] != "json_schema" {
+		return nil, false
+	}
+	spec, _ := rf["json_schema"].(map[string]any)
+	schema, ok := spec["schema"]
+	if !ok {
+		return nil, false
+	}
+	return map[string]any{"format": map[string]any{"type": "json_schema", "schema": schema}}, true
 }

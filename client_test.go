@@ -730,10 +730,10 @@ func TestReadResponseHeaders(t *testing.T) {
 	t.Parallel()
 
 	h := http.Header{}
-	h.Set("x-request-id", "req_abc")
-	h.Set("openai-processing-ms", "812")
-	h.Set("x-ratelimit-remaining-requests", "4999")
-	h.Set("x-ratelimit-remaining-tokens", "0")
+	h.Set("X-Request-Id", "req_abc")
+	h.Set("Openai-Processing-Ms", "812")
+	h.Set("X-Ratelimit-Remaining-Requests", "4999")
+	h.Set("X-Ratelimit-Remaining-Tokens", "0")
 	res := &chatResult{}
 	readResponseHeaders(h, res)
 	require.Equal(t, "req_abc", res.RequestID)
@@ -743,8 +743,8 @@ func TestReadResponseHeaders(t *testing.T) {
 
 	// Anthropic spells the same things differently.
 	h = http.Header{}
-	h.Set("request-id", "req_anth")
-	h.Set("anthropic-ratelimit-tokens-remaining", "12000")
+	h.Set("Request-Id", "req_anth")
+	h.Set("Anthropic-Ratelimit-Tokens-Remaining", "12000")
 	res = &chatResult{}
 	readResponseHeaders(h, res)
 	require.Equal(t, "req_anth", res.RequestID)
@@ -754,8 +754,39 @@ func TestReadResponseHeaders(t *testing.T) {
 
 	// Some tiers send sentinel values that must not become a quota reading.
 	h = http.Header{}
-	h.Set("x-ratelimit-remaining-tokens", "-1")
+	h.Set("X-Ratelimit-Remaining-Tokens", "-1")
 	res = &chatResult{}
 	readResponseHeaders(h, res)
 	require.Equal(t, -1, res.RateLimitRemainingTokens)
+}
+
+// OpenRouter reports the charge on usage.cost, and llama.cpp reports its own
+// prefill and decode split plus draft counts on a top-level timings object.
+// Both ride on the final chunk and neither is required.
+func TestParseStream_ServerCostAndTimings(t *testing.T) {
+	t.Parallel()
+	srv := sseServer(t, time.Millisecond, []string{
+		`{"choices":[{"index":0,"delta":{"content":"hi"}}]}`,
+		`{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1,"cost":0.00042},` +
+			`"timings":{"prompt_ms":12.5,"predicted_ms":80,"draft_n":10,"draft_n_accepted":7}}`,
+		"[DONE]",
+	})
+	resp := httpGet(t, srv.URL)
+	res, err := parseStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
+	require.NoError(t, err)
+	require.InDelta(t, 0.00042, res.ServerCost, 1e-9)
+	require.Equal(t, 12500*time.Microsecond, res.ServerPrefill)
+	require.Equal(t, 80*time.Millisecond, res.ServerDecode)
+	require.Equal(t, 10, res.DraftTokens)
+	require.Equal(t, 7, res.DraftAccepted)
+
+	c := &Client{cfg: &Options{Cost: &CostModel{USDPerMInputTokens: 1000, USDPerMOutputTokens: 1000}}}
+	usd, ok := c.costOf(res)
+	require.True(t, ok)
+	require.InDelta(t, 0.00042, usd, 1e-9, "the provider's own charge beats the model")
+	usd, ok = c.costOf(&chatResult{PromptTokens: 1000, CompletionTokens: 1000})
+	require.True(t, ok)
+	require.InDelta(t, 2.0, usd, 1e-9, "the model applies when the provider reports nothing")
+	_, ok = (&Client{cfg: &Options{}}).costOf(&chatResult{})
+	require.False(t, ok)
 }
