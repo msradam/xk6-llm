@@ -132,7 +132,7 @@ func anthropicBody(body map[string]any, model string, ignoreEOS bool) map[string
 //   - TTFT is timed at the first content-bearing event: a text_delta with
 //     non-empty text, a tool_use content_block_start, or an input_json_delta.
 //     message_start, ping, and the empty text content_block_start are skipped
-//     — these are the Anthropic analogue of OpenAI's role-only delta, and
+//     These are the Anthropic analogue of OpenAI's role-only delta, and
 //     counting them would report TTFT one event early.
 //
 //   - ITL samples are gaps between consecutive text deltas; the first sample
@@ -150,7 +150,7 @@ func anthropicBody(body map[string]any, model string, ignoreEOS bool) map[string
 //     reasoning deltas land when reasoning finishes, not while it runs.
 //
 //     So on a reasoning model TTFT measures time-to-end-of-reasoning, not
-//     time-to-first-token — there is no observable event in between. That is a
+//     time-to-first-token, because there is no observable event in between. That is a
 //     provider property, not something this parser can improve. Counting
 //     reasoning deltas keeps TTFT defined as "first observable generated
 //     output"; the practical win here is correct token accounting and a TPOT
@@ -293,7 +293,7 @@ func parseAnthropicStream(reqCtx context.Context, r io.Reader, start time.Time, 
 			gotFirstToken = true
 		}
 
-		// Reasoning chunks count toward the budget too — see parseStream.
+		// Reasoning chunks count toward the budget too; see parseStream.
 		if abort.MaxTokens > 0 && res.Chunks+res.ThinkingChunks >= abort.MaxTokens {
 			res.Aborted = true
 			stop = true

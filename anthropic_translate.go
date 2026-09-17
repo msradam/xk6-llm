@@ -144,7 +144,7 @@ func translateToolChoice(raw any) any {
 //   - A `tool`-role message becomes a `user` message containing a
 //     `tool_result` block keyed by `tool_use_id`. Consecutive tool messages
 //     merge into one user message, because Anthropic expects all tool results
-//     for a turn in a single message — splitting them trains the model to stop
+//     for a turn in a single message. Splitting them trains the model to stop
 //     making parallel calls.
 func translateMessages(raw any) ([]any, any) {
 	list, ok := asAnySlice(raw)

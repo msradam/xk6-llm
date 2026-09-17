@@ -118,7 +118,7 @@ func TestTranslateMessages_AgentLoop(t *testing.T) {
 
 	require.Equal(t, "be terse", system, "system hoisted out of the array")
 
-	// user, assistant(tool_use), user(tool_result x2) — the two tool results
+	// user, assistant(tool_use), user(tool_result x2). The two tool results
 	// merge into ONE user message.
 	require.Len(t, msgs, 3)
 
@@ -176,7 +176,7 @@ func TestDecodeToolArguments(t *testing.T) {
 func TestAbortBudget_CountsReasoningChunks(t *testing.T) {
 	t.Parallel()
 	// A reasoning-only stream: no text ever arrives. An abort budget that
-	// counted text chunks alone would never fire — the exact stream you most
+	// counted text chunks alone would never fire, and that is the exact stream you most
 	// want to cut off.
 	reasoning := `{"choices":[{"index":0,"delta":{"reasoning_content":"thinking "},"finish_reason":null}]}`
 	srv := sseServer(t, 2*time.Millisecond, []string{

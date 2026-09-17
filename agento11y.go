@@ -45,12 +45,12 @@ type Agento11yConfig struct {
 
 	AgentName    string
 	AgentVersion string
-	// Synthetic marks every exported generation as load-generated. Default
+	// Synthetic tags every exported generation as load-generated. Default
 	// true: traffic from a load generator is synthetic by construction, and a
 	// consumer that cannot distinguish it will corrupt its own cost and usage
 	// reporting.
 	Synthetic bool
-	// CaptureContent sends prompt and completion text. Default false —
+	// CaptureContent sends prompt and completion text. Default false:
 	// benchmark corpora are usually uninteresting and sometimes proprietary.
 	CaptureContent bool
 	// Tags are merged into every exported generation.
@@ -64,7 +64,7 @@ type Agento11yConfig struct {
 //
 // A consumer that treats synthetic records as real traffic will overstate
 // usage and cost. Until Agent Observability reserves a tag for this, the
-// convention has to live somewhere public — hence a constant rather than a
+// convention has to live somewhere public, so it is a constant and not a
 // string literal in an example script.
 const SyntheticTagKey = "agento11y.synthetic"
 
@@ -455,7 +455,7 @@ func applyRequestParams(gen *agento11y.Generation, req *chatRequest, res *chatRe
 }
 
 // providerName labels the generation with the wire it was measured over, which
-// is the only provider identity the extension can know for certain — a
+// is the only provider identity the extension can know for certain, since a
 // base_url may point at a gateway, a proxy, or a self-hosted server.
 func (c *Client) providerName() string {
 	if c.cfg.Wire == WireAnthropic {
@@ -499,7 +499,7 @@ func (c *Client) generationMetadata(res *chatResult) map[string]any {
 	}
 	if res.ThinkingTokens > 0 || res.ThinkingChunks > 0 {
 		// Reasoning tokens are billed but, with thinking display omitted, do
-		// not stream individually — so TPOT above covers the text phase only.
+		// not stream individually, so TPOT above covers the text phase only.
 		// Recording the breakout keeps that interpretable downstream.
 		meta[MetaThinkingTokens] = res.ThinkingTokens
 		meta[MetaThinkingChunks] = res.ThinkingChunks
@@ -811,13 +811,13 @@ const flushTimeout = 10 * time.Second
 
 // Records queued late in an iteration are lost if the test ends before the
 // flush interval elapses, and the records most likely to be dropped are the
-// last ones — for a canary, the observation nearest whatever you were trying
+// last ones, which for a canary are the observations nearest whatever you were trying
 // to catch. Observed dropping the final node of a 4-call agent tree, which was
 // also the only multi-parent node in it.
 //
 // There is no reliable hook to fix this inside the extension. Flushing from a
 // goroutine that waits on the VU context does not work: nothing waits for that
-// goroutine, so k6 exits before its request completes (verified — the same
+// goroutine, so k6 exits before its request completes (verified: the same
 // record was still dropped). k6 exposes no per-VU teardown, and teardown() runs
 // module init again, so a client constructed there has an empty queue.
 //

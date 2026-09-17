@@ -63,10 +63,10 @@ const (
 	errKindHTTP5xx = "http_5xx"
 	errKindStream  = "stream"
 	errKindDecode  = "decode"
-	// errKindExport marks a failure to ship a generation record. The chat call
+	// errKindExport is a failure to ship a generation record. The chat call
 	// itself succeeded; only telemetry was lost.
 	errKindExport = "export"
-	// errKindUnsupported marks a call the configured wire cannot serve at all.
+	// errKindUnsupported is a call the configured wire cannot serve at all.
 	errKindUnsupported = "unsupported"
 )
 
@@ -177,14 +177,14 @@ type chatResult struct {
 	PromptTokens     int
 	CompletionTokens int
 	// CachedTokens is the cached sub-bucket of PromptTokens when the provider
-	// reports it. Not additive — these tokens are already in PromptTokens.
+	// reports it. Not additive: these tokens are already in PromptTokens.
 	//
 	// Recording it is what makes a repeated-prompt probe interpretable.
 	// Measured against gpt-4.1-mini on 2026-09-10 with a 1337-token prompt:
 	// twelve byte-identical requests produced four cache hits of 1152 tokens
 	// and eight misses, while twelve requests with a unique nonce prefix
 	// produced zero hits. So provider caching is best-effort and
-	// non-deterministic — the same probe alternates between two different
+	// non-deterministic: the same probe alternates between two different
 	// prompt-processing regimes for reasons unrelated to provider health.
 	//
 	// No latency effect was demonstrated at that sample size (hit median
@@ -197,7 +197,7 @@ type chatResult struct {
 	CacheWriteTokens int
 	// ThinkingTokens is the reasoning sub-bucket of CompletionTokens when the
 	// provider reports it (Anthropic: output_tokens_details.thinking_tokens).
-	// It is not additive — these tokens are already counted in
+	// It is not additive: these tokens are already counted in
 	// CompletionTokens.
 	ThinkingTokens int
 	// ThinkingChunks counts reasoning stream events. With Anthropic's default
@@ -300,7 +300,7 @@ func (r *chatResult) sloOutcome() sloOutcome {
 // events, and the instant they began arriving.
 //
 // On a reasoning model with thinking display omitted, reasoning tokens are
-// billed in CompletionTokens but never stream individually — Anthropic sends
+// billed in CompletionTokens but never stream individually. Anthropic sends
 // one empty thinking_delta for the whole phase. Dividing the post-TTFT window
 // by all completion tokens then yields a per-token time that is physically
 // impossible (observed: 130ns). Only the text phase is measurable, so TPOT is
@@ -314,7 +314,7 @@ func (r *chatResult) streamedOutput() (int, time.Duration) {
 	}
 	// Text tokens only, timed from the text phase. When reasoning consumed
 	// every output token no text streamed at all, so this is (0, 0) and TPOT
-	// is correctly not derivable — observed on gpt-5-nano terminating with
+	// is correctly not derivable, as observed on gpt-5-nano terminating with
 	// response.incomplete at max_output_tokens.
 	// Floored at zero defensively: reasoning tokens are documented as a
 	// sub-bucket of the output total, so a negative count should not happen.
@@ -929,8 +929,8 @@ func parseStream(reqCtx context.Context, r io.Reader, start time.Time, abort abo
 		// counted separately, but they do not contribute ITL samples or text
 		// Chunks. Reasoning tokens are billed inside CompletionTokens while
 		// arriving under a different field, so a parser that ignores them
-		// times TTFT at the first *text* delta — after the entire reasoning
-		// phase — and computes TPOT over tokens that never streamed as text.
+		// times TTFT at the first *text* delta, after the entire reasoning
+		// phase, and computes TPOT over tokens that never streamed as text.
 		if reasoning := ch.Delta.reasoningText(); reasoning != "" {
 			hadContent = true
 			res.ThinkingChunks++

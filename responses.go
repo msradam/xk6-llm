@@ -266,7 +266,7 @@ func responsesInput(raw any) ([]any, string) {
 //   - TTFT is timed at the first content-bearing delta: output text, a
 //     reasoning summary delta, or a function-call argument fragment. The
 //     structural events (response.created, in_progress, output_item.added,
-//     content_part.added) are skipped — they are this wire's analogue of the
+//     content_part.added) are skipped; they are this wire's analogue of the
 //     role-only chat delta.
 //   - Unlike Anthropic, reasoning summary text streams incrementally here (70
 //     deltas observed on gpt-5-nano), so reasoning is genuinely observable on
@@ -275,13 +275,13 @@ func responsesInput(raw any) ([]any, string) {
 //   - Terminal events are response.completed, response.incomplete, and
 //     response.failed. A reasoning model that exhausts max_output_tokens
 //     before emitting text terminates with response.incomplete and no text at
-//     all — observed on gpt-5-nano at max_output_tokens=200.
+//     all, as observed on gpt-5-nano at max_output_tokens=200.
 //
 // Caveat when reading ITL and TPOT on a reasoning model: they measure
 // *delivery* cadence, not generation cadence. Measured on gpt-5-nano
 // (2026-09-10, reasoning summary enabled, 142 output tokens of which 64 were
 // reasoning): reasoning summary streamed from 1351ms, the first text delta
-// arrived at 2025ms, and the remaining 58 text deltas then drained in ~28ms —
+// arrived at 2025ms, and the remaining 58 text deltas then drained in ~28ms:
 // itl_p50 of 2.4us, itl_mean 0.48ms, tpot 0.56ms. The generation had already
 // happened; the text was flushed from a buffer. Compare gpt-4.1-mini on the
 // same prompt: 56 deltas, tpot 15.6ms, chunks tracking token count, which is
@@ -429,7 +429,7 @@ func parseResponsesStream(reqCtx context.Context, r io.Reader, start time.Time, 
 			gotFirstToken = true
 		}
 
-		// Reasoning chunks count toward the abort budget — see parseStream.
+		// Reasoning chunks count toward the abort budget; see parseStream.
 		if abort.MaxTokens > 0 && res.Chunks+res.ThinkingChunks >= abort.MaxTokens {
 			res.Aborted = true
 			stop = true

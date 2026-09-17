@@ -107,7 +107,7 @@ func TestParseAnthropicStream_MidStreamError(t *testing.T) {
 func TestParseAnthropicStream_StopsAtMessageStop(t *testing.T) {
 	t.Parallel()
 	// There is no [DONE] sentinel on this wire. Anything after message_stop must
-	// not be consumed — a trailing event would otherwise inflate Chunks.
+	// not be consumed, since a trailing event would otherwise inflate Chunks.
 	srv := sseServer(t, time.Millisecond, []string{
 		anthMessageStart,
 		anthText("one"),
@@ -216,7 +216,7 @@ func TestParseAnthropicStream_ReasoningModel(t *testing.T) {
 	require.Greater(t, res.TTFText, 60*time.Millisecond)
 
 	// TPOT is computed over the 41 streamed text tokens from the text phase,
-	// not over all 200 billed tokens from TTFT — the latter is what produced
+	// not over all 200 billed tokens from TTFT. The latter is what produced
 	// sub-microsecond nonsense.
 	require.True(t, res.TPOTDerivable())
 	tokens, from := res.streamedOutput()

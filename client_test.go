@@ -630,7 +630,7 @@ func TestParseStream_ToolCallBeforeContent_NoBogusITL(t *testing.T) {
 }
 
 // TestParseStream_VLLMReasoningContent covers an OpenAI-compatible reasoning
-// stream — the shape vLLM and SGLang emit with a reasoning parser enabled, and
+// stream, the shape vLLM and SGLang emit with a reasoning parser enabled, and
 // what the DeepSeek API returns.
 //
 // Reasoning arrives under `delta.reasoning_content` and its tokens are billed

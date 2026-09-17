@@ -73,7 +73,7 @@ func TestParseResponsesStream_TextAndUsage(t *testing.T) {
 	require.Len(t, res.ITL, 2, "3 text deltas → 2 ITL samples")
 
 	// Four structural events precede the first text delta at 10ms spacing.
-	// They must not establish TTFT — they are this wire's role-only delta.
+	// They must not establish TTFT; they are this wire's role-only delta.
 	require.GreaterOrEqual(t, res.TTFT, 38*time.Millisecond,
 		"created/in_progress/output_item.added/content_part.added must not set TTFT")
 	require.Equal(t, res.TTFT, res.TTFText, "no reasoning phase, so these coincide")
@@ -106,7 +106,7 @@ func TestParseResponsesStream_ReasoningIncomplete(t *testing.T) {
 	require.Equal(t, 200, res.ThinkingTokens)
 
 	// Every output token was reasoning, so no text streamed and TPOT is not
-	// derivable — reporting one would be inventing a number.
+	// derivable, and reporting one would be inventing a number.
 	tokens, _ := res.streamedOutput()
 	require.Equal(t, 0, tokens)
 	require.False(t, res.TPOTDerivable())
