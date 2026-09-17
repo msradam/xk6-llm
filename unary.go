@@ -64,7 +64,7 @@ func textFromContent(raw json.RawMessage) string {
 	}
 	var b strings.Builder
 	for _, p := range parts {
-		if p.Type == "text" || p.Type == "output_text" {
+		if p.Type == partText || p.Type == "output_text" {
 			b.WriteString(p.Text)
 		}
 	}
@@ -137,6 +137,7 @@ type anthropicMessageResponse struct {
 		InputTokens          int `json:"input_tokens"`
 		OutputTokens         int `json:"output_tokens"`
 		CacheReadInputTokens int `json:"cache_read_input_tokens"`
+		CacheWriteInputToks  int `json:"cache_creation_input_tokens"`
 		OutputTokensDetails  *struct {
 			ThinkingTokens int `json:"thinking_tokens"`
 		} `json:"output_tokens_details"`
@@ -160,6 +161,7 @@ func parseAnthropicMessage(raw []byte) (*chatResult, error) {
 		res.PromptTokens = u.InputTokens
 		res.CompletionTokens = u.OutputTokens
 		res.CachedTokens = u.CacheReadInputTokens
+		res.CacheWriteTokens = u.CacheWriteInputToks
 		if d := u.OutputTokensDetails; d != nil {
 			res.ThinkingTokens = d.ThinkingTokens
 		}
@@ -167,7 +169,7 @@ func parseAnthropicMessage(raw []byte) (*chatResult, error) {
 	var text strings.Builder
 	for _, block := range body.Content {
 		switch block.Type {
-		case "text":
+		case partText:
 			text.WriteString(block.Text)
 		case "tool_use":
 			args := string(block.Input)
@@ -247,7 +249,7 @@ func parseResponsesObject(raw []byte) (*chatResult, error) {
 					text.WriteString(part.Text)
 				}
 			}
-		case "function_call":
+		case itemFunctionCall:
 			res.ToolCalls = append(res.ToolCalls, ToolCall{ID: item.CallID, Name: item.Name, Arguments: item.Arguments})
 		}
 	}
@@ -284,7 +286,7 @@ func parseProviderWireV4Unary(raw []byte) (*chatResult, error) {
 	}
 	var text strings.Builder
 	for _, part := range body.Content {
-		if part.Type == "text" {
+		if part.Type == partText {
 			text.WriteString(part.Text)
 		}
 	}

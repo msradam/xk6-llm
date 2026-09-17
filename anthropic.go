@@ -200,6 +200,7 @@ func parseAnthropicStream(reqCtx context.Context, r io.Reader, start time.Time, 
 			if ev.Message != nil && ev.Message.Usage != nil {
 				res.PromptTokens = ev.Message.Usage.InputTokens
 				res.CachedTokens = ev.Message.Usage.CacheReadInputTokens
+				res.CacheWriteTokens = ev.Message.Usage.CacheCreationInputTok
 				// Anthropic reports a running output count here too; keep the
 				// larger value seen so an early non-zero is not lost.
 				if ev.Message.Usage.OutputTokens > res.CompletionTokens {

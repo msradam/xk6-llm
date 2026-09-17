@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -32,7 +33,7 @@ var v4CallOptions = map[string]string{
 func providerWireV4Body(body map[string]any) (map[string]any, error) {
 	out := make(map[string]any, len(body))
 	for key, value := range body {
-		if key == "messages" {
+		if key == fieldMessages {
 			prompt, err := providerWireV4Prompt(value)
 			if err != nil {
 				return nil, err
@@ -50,7 +51,7 @@ func providerWireV4Body(body map[string]any) (map[string]any, error) {
 		out[name] = value
 	}
 	if _, ok := out["prompt"]; !ok {
-		return nil, fmt.Errorf("llm: messages are required")
+		return nil, errors.New("llm: messages are required")
 	}
 	return out, nil
 }
@@ -68,13 +69,13 @@ func providerWireV4Prompt(raw any) ([]any, error) {
 		}
 		role, _ := message["role"].(string)
 		switch role {
-		case "system":
+		case roleSystem:
 			text, ok := message["content"].(string)
 			if !ok {
 				return nil, fmt.Errorf("llm: messages[%d]: system content must be a string", i)
 			}
 			prompt = append(prompt, map[string]any{"role": "system", "content": text})
-		case "user", "assistant":
+		case "user", roleAssistant:
 			parts, err := v4TextParts(message["content"])
 			if err != nil {
 				return nil, fmt.Errorf("llm: messages[%d]: %w", i, err)
@@ -96,8 +97,8 @@ func v4TextParts(content any) ([]any, error) {
 		for _, entry := range value {
 			part, ok := entry.(map[string]any)
 			text, isText := part["text"].(string)
-			if !ok || part["type"] != "text" || !isText {
-				return nil, fmt.Errorf("only text content parts are supported")
+			if !ok || part["type"] != partText || !isText {
+				return nil, errors.New("only text content parts are supported")
 			}
 			parts = append(parts, map[string]any{"type": "text", "text": text})
 		}

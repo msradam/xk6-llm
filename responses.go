@@ -109,7 +109,7 @@ func responsesBody(body map[string]any, model string) map[string]any {
 			continue
 		}
 		switch k {
-		case "messages":
+		case fieldMessages:
 			// Handled below, together with instructions.
 		case "tools":
 			out[k] = responsesTools(v)
@@ -191,7 +191,7 @@ func responsesToolChoice(raw any) any {
 //   - assistant with tool_calls -> function_call items
 //   - tool role        -> function_call_output items
 //   - everything else  -> passed through as a role/content item
-func responsesInput(raw any) (input []any, instructions string) {
+func responsesInput(raw any) ([]any, string) {
 	list, ok := asAnySlice(raw)
 	if !ok {
 		return nil, ""
@@ -206,14 +206,14 @@ func responsesInput(raw any) (input []any, instructions string) {
 			continue
 		}
 		switch role, _ := msg["role"].(string); role {
-		case "system":
+		case roleSystem:
 			if text, ok := msg["content"].(string); ok {
 				systemParts = append(systemParts, text)
 				continue
 			}
 			out = append(out, msg)
 
-		case "tool":
+		case roleTool:
 			entry := map[string]any{"type": "function_call_output"}
 			if id, ok := msg["tool_call_id"].(string); ok {
 				entry["call_id"] = id
@@ -223,7 +223,7 @@ func responsesInput(raw any) (input []any, instructions string) {
 			}
 			out = append(out, entry)
 
-		case "assistant":
+		case roleAssistant:
 			calls, hasCalls := asAnySlice(msg["tool_calls"])
 			if !hasCalls {
 				out = append(out, msg)
@@ -289,6 +289,8 @@ func responsesInput(raw any) (input []any, instructions string) {
 // same prompt: 56 deltas, tpot 15.6ms, chunks tracking token count, which is
 // genuine per-token streaming. Comparing ITL across a reasoning and a
 // non-reasoning model therefore compares two different things.
+//
+//nolint:maintidx,nestif // one event loop per stream taxonomy; splitting it would separate the timing rules from the events they apply to
 func parseResponsesStream(reqCtx context.Context, r io.Reader, start time.Time, abort abortPolicy) (*chatResult, error) {
 	res := &chatResult{}
 	var buf strings.Builder
@@ -356,7 +358,7 @@ func parseResponsesStream(reqCtx context.Context, r io.Reader, start time.Time, 
 			res.ThinkingChunks++
 
 		case "response.output_item.added":
-			if ev.Item != nil && ev.Item.Type == "function_call" {
+			if ev.Item != nil && ev.Item.Type == itemFunctionCall {
 				hadContent = true
 				tc := toolAt(ev.OutputIndex)
 				tc.ID = ev.Item.CallID

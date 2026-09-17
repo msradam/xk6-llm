@@ -70,6 +70,16 @@ const (
 	errKindUnsupported = "unsupported"
 )
 
+// Chat-completions role and item names every wire translation switches on.
+const (
+	roleSystem       = "system"
+	roleAssistant    = "assistant"
+	roleTool         = "tool"
+	partText         = "text"
+	fieldMessages    = "messages"
+	itemFunctionCall = "function_call"
+)
+
 type chatError struct {
 	Kind string
 	Err  error
@@ -182,6 +192,9 @@ type chatResult struct {
 	// 424-2761ms). The reason to record this field is therefore to explain
 	// variance, not to correct a known directional bias.
 	CachedTokens int
+	// CacheWriteTokens is the prompt-cache write sub-bucket of PromptTokens
+	// (Anthropic cache_creation_input_tokens). Not additive.
+	CacheWriteTokens int
 	// ThinkingTokens is the reasoning sub-bucket of CompletionTokens when the
 	// provider reports it (Anthropic: output_tokens_details.thinking_tokens).
 	// It is not additive — these tokens are already counted in
@@ -219,6 +232,24 @@ type sloOutcome struct {
 	AllPass               bool
 }
 
+// TPOTDerivable reports whether TPOT can be computed.
+//
+// TPOT (matches AIPerf/genai-perf/MLPerf "TPOT", which is what those tools confusingly
+// call ITL): (e2el - ttft) / (output_tokens - 1). Requires output_tokens > 1.
+func (r *chatResult) TPOTDerivable() bool {
+	tokens, from := r.streamedOutput()
+	return tokens > 1 && from > 0 && r.Duration > from
+}
+
+// TPOT returns the scalar inter-token time. Caller should check TPOTDerivable first.
+func (r *chatResult) TPOT() time.Duration {
+	if !r.TPOTDerivable() {
+		return 0
+	}
+	tokens, from := r.streamedOutput()
+	return (r.Duration - from) / time.Duration(tokens-1)
+}
+
 func (r *chatResult) sloOutcome() sloOutcome {
 	out := sloOutcome{AllPass: true}
 	if r.SLO == nil || r.SLO.Empty() {
@@ -242,24 +273,6 @@ func (r *chatResult) sloOutcome() sloOutcome {
 	return out
 }
 
-// TPOTDerivable reports whether TPOT can be computed.
-//
-// TPOT (matches AIPerf/genai-perf/MLPerf "TPOT", which is what those tools confusingly
-// call ITL): (e2el - ttft) / (output_tokens - 1). Requires output_tokens > 1.
-func (r *chatResult) TPOTDerivable() bool {
-	tokens, from := r.streamedOutput()
-	return tokens > 1 && from > 0 && r.Duration > from
-}
-
-// TPOT returns the scalar inter-token time. Caller should check TPOTDerivable first.
-func (r *chatResult) TPOT() time.Duration {
-	if !r.TPOTDerivable() {
-		return 0
-	}
-	tokens, from := r.streamedOutput()
-	return (r.Duration - from) / time.Duration(tokens-1)
-}
-
 // streamedOutput returns the output tokens that actually arrived as stream
 // events, and the instant they began arriving.
 //
@@ -272,7 +285,7 @@ func (r *chatResult) TPOT() time.Duration {
 //
 // With no reasoning tokens reported this is the original definition exactly,
 // so the OpenAI path is unchanged.
-func (r *chatResult) streamedOutput() (tokens int, from time.Duration) {
+func (r *chatResult) streamedOutput() (int, time.Duration) {
 	if r.ThinkingTokens <= 0 {
 		return r.CompletionTokens, r.TTFT
 	}
@@ -280,12 +293,9 @@ func (r *chatResult) streamedOutput() (tokens int, from time.Duration) {
 	// every output token no text streamed at all, so this is (0, 0) and TPOT
 	// is correctly not derivable — observed on gpt-5-nano terminating with
 	// response.incomplete at max_output_tokens.
-	text := r.CompletionTokens - r.ThinkingTokens
-	if text < 0 {
-		// Defensive: reasoning tokens are documented as a sub-bucket of the
-		// output total, so this should not happen.
-		text = 0
-	}
+	// Floored at zero defensively: reasoning tokens are documented as a
+	// sub-bucket of the output total, so a negative count should not happen.
+	text := max(r.CompletionTokens-r.ThinkingTokens, 0)
 	return text, r.TTFText
 }
 
@@ -297,6 +307,7 @@ func (r *chatResult) toJSObject() map[string]any {
 	out := map[string]any{
 		"generation_id":       r.GenerationID,
 		"cached_tokens":       r.CachedTokens,
+		"cache_write_tokens":  r.CacheWriteTokens,
 		"content":             r.Content,
 		"ttft_ms":             float64(r.TTFT) / float64(time.Millisecond),
 		"ttf_text_ms":         float64(r.TTFText) / float64(time.Millisecond),
@@ -366,16 +377,24 @@ func (c *Client) Chat(req map[string]any) *sobek.Promise {
 	}
 
 	go func() {
+		start := time.Now()
 		res, err := c.doChat(ctx, parsed)
 		if err != nil {
 			c.emitError(ctx, model, errorKind(err), parsed.tagSet())
+			// A failed call is still a generation the canary made. Export it
+			// with the error so a consumer sees the failure, not a gap.
+			c.exportGeneration(ctx, model, parsed, &chatResult{
+				Duration:     time.Since(start),
+				Unary:        parsed.unary,
+				GenerationID: parsed.generationID,
+			}, err)
 			reject(err)
 			return
 		}
 		res.SLO = parsed.slo
 		res.GenerationID = parsed.generationID
 		c.emit(ctx, model, res, parsed.tagSet())
-		c.exportGeneration(ctx, model, parsed, res)
+		c.exportGeneration(ctx, model, parsed, res, nil)
 		resolve(res.toJSObject())
 	}()
 	return promise
@@ -548,16 +567,17 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 	unary := req.unary
 
 	body := req.body
-	if anthropic {
+	switch {
+	case anthropic:
 		body = anthropicBody(body, c.cfg.Model, c.cfg.IgnoreEOS)
-	} else if responses {
+	case responses:
 		body = responsesBody(body, c.cfg.Model)
-	} else if v4 {
+	case v4:
 		var err error
 		if body, err = providerWireV4Body(body); err != nil {
 			return nil, newChatError(errKindUnsupported, err)
 		}
-	} else {
+	default:
 		body["model"] = c.cfg.Model
 		if !unary {
 			body["stream"] = true
@@ -597,14 +617,14 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
 	if v4 {
-		httpReq.Header.Set("ai-language-model-id", c.cfg.Model)
-		httpReq.Header.Set("ai-language-model-specification-version", "4")
+		httpReq.Header.Set("Ai-Language-Model-Id", c.cfg.Model)
+		httpReq.Header.Set("Ai-Language-Model-Specification-Version", "4")
 		httpReq.Header.Set("Ai-Language-Model-Streaming", strconv.FormatBool(!unary))
 	}
 	if anthropic {
-		httpReq.Header.Set("anthropic-version", anthropicVersion)
+		httpReq.Header.Set("Anthropic-Version", anthropicVersion)
 		if c.cfg.APIKey != "" {
-			httpReq.Header.Set("x-api-key", c.cfg.APIKey)
+			httpReq.Header.Set("X-Api-Key", c.cfg.APIKey)
 		}
 	} else if c.cfg.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)

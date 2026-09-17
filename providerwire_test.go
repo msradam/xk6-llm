@@ -14,6 +14,7 @@ import (
 )
 
 func TestProviderWireV4Body_MapsMessagesAndOptions(t *testing.T) {
+	t.Parallel()
 	body, err := providerWireV4Body(map[string]any{
 		"messages": []any{
 			map[string]any{"role": "system", "content": "be brief"},
@@ -40,6 +41,7 @@ func TestProviderWireV4Body_MapsMessagesAndOptions(t *testing.T) {
 }
 
 func TestProviderWireV4Body_RejectsWhatV4CannotCarry(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]map[string]any{
 		"unmapped field":   {"messages": []any{map[string]any{"role": "user", "content": "hi"}}, "tools": []any{}},
 		"tool role":        {"messages": []any{map[string]any{"role": "tool", "content": "x"}}},
@@ -47,6 +49,7 @@ func TestProviderWireV4Body_RejectsWhatV4CannotCarry(t *testing.T) {
 		"missing messages": {"max_tokens": 1},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			_, err := providerWireV4Body(body)
 			require.Error(t, err)
 		})
@@ -54,6 +57,7 @@ func TestProviderWireV4Body_RejectsWhatV4CannotCarry(t *testing.T) {
 }
 
 func TestParseProviderWireV4Stream(t *testing.T) {
+	t.Parallel()
 	srv := sseServer(t, 5*time.Millisecond, []string{
 		`{"type":"stream-start","warnings":[]}`,
 		`{"type":"response-metadata","modelId":"grafana/test"}`,
@@ -77,6 +81,7 @@ func TestParseProviderWireV4Stream(t *testing.T) {
 }
 
 func TestParseProviderWireV4Stream_ErrorPart(t *testing.T) {
+	t.Parallel()
 	srv := sseServer(t, 0, []string{
 		`{"type":"stream-start","warnings":[]}`,
 		`{"type":"error","error":{"message":"request timed out","code":"timeout","statusCode":504,"retryable":true}}`,
@@ -87,11 +92,12 @@ func TestParseProviderWireV4Stream_ErrorPart(t *testing.T) {
 }
 
 func TestDoChat_ProviderWireV4Request(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/language-model", r.URL.Path)
-		assert.Equal(t, "grafana/test", r.Header.Get("ai-language-model-id"))
-		assert.Equal(t, "4", r.Header.Get("ai-language-model-specification-version"))
-		assert.Equal(t, "true", r.Header.Get("ai-language-model-streaming"))
+		assert.Equal(t, "grafana/test", r.Header.Get("Ai-Language-Model-Id"))
+		assert.Equal(t, "4", r.Header.Get("Ai-Language-Model-Specification-Version"))
+		assert.Equal(t, "true", r.Header.Get("Ai-Language-Model-Streaming"))
 		assert.Equal(t, "token", r.Header.Get("X-Access-Token"))
 		raw, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
@@ -113,6 +119,7 @@ func TestDoChat_ProviderWireV4Request(t *testing.T) {
 }
 
 func TestParseOptions_WireProviderWireV4(t *testing.T) {
+	t.Parallel()
 	o, err := parseOptions(map[string]any{"wire": "providerwire-v4"})
 	require.NoError(t, err)
 	assert.Equal(t, WireProviderWireV4, o.Wire)

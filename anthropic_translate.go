@@ -147,7 +147,7 @@ func translateToolChoice(raw any) any {
 //     merge into one user message, because Anthropic expects all tool results
 //     for a turn in a single message — splitting them trains the model to stop
 //     making parallel calls.
-func translateMessages(raw any) (messages []any, system string) {
+func translateMessages(raw any) ([]any, string) {
 	list, ok := asAnySlice(raw)
 	if !ok {
 		return nil, ""
@@ -176,7 +176,7 @@ func translateMessages(raw any) (messages []any, system string) {
 		role, _ := msg["role"].(string)
 
 		switch role {
-		case "system":
+		case roleSystem:
 			flush()
 			if text, ok := msg["content"].(string); ok {
 				systemParts = append(systemParts, text)
@@ -184,7 +184,7 @@ func translateMessages(raw any) (messages []any, system string) {
 			}
 			out = append(out, msg)
 
-		case "tool":
+		case roleTool:
 			result := map[string]any{"type": "tool_result"}
 			if id, ok := msg["tool_call_id"].(string); ok {
 				result["tool_use_id"] = id
@@ -194,7 +194,7 @@ func translateMessages(raw any) (messages []any, system string) {
 			}
 			pendingResults = append(pendingResults, result)
 
-		case "assistant":
+		case roleAssistant:
 			flush()
 			calls, hasCalls := asAnySlice(msg["tool_calls"])
 			if !hasCalls {

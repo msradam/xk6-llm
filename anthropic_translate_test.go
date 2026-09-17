@@ -68,18 +68,18 @@ func TestTranslateTools(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, list, 3)
 
-	first := list[0].(map[string]any)
+	first := asMap(t, list[0])
 	require.Equal(t, "get_weather", first["name"])
 	require.Equal(t, "w", first["description"])
 	require.Contains(t, first, "input_schema")
 	require.NotContains(t, first, "function", "the OpenAI wrapper is removed")
 	require.NotContains(t, first, "parameters")
 
-	second := list[1].(map[string]any)
+	second := asMap(t, list[1])
 	require.Equal(t, map[string]any{"type": "object", "properties": map[string]any{}},
 		second["input_schema"], "a no-arg tool gets an empty object schema")
 
-	require.Equal(t, "native", list[2].(map[string]any)["name"])
+	require.Equal(t, "native", asMap(t, list[2])["name"])
 }
 
 func TestTranslateToolChoice(t *testing.T) {
@@ -122,30 +122,30 @@ func TestTranslateMessages_AgentLoop(t *testing.T) {
 	// merge into ONE user message.
 	require.Len(t, msgs, 3)
 
-	assistant := msgs[1].(map[string]any)
+	assistant := asMap(t, msgs[1])
 	require.Equal(t, "assistant", assistant["role"])
-	blocks := assistant["content"].([]any)
+	blocks := asList(t, assistant["content"])
 	require.Len(t, blocks, 3, "leading text block plus two tool_use blocks")
-	require.Equal(t, "text", blocks[0].(map[string]any)["type"])
+	require.Equal(t, "text", asMap(t, blocks[0])["type"])
 
-	call := blocks[1].(map[string]any)
+	call := asMap(t, blocks[1])
 	require.Equal(t, "tool_use", call["type"])
 	require.Equal(t, "call_a", call["id"])
 	require.Equal(t, "get_weather", call["name"])
 	require.Equal(t, map[string]any{"city": "Berlin"}, call["input"],
 		"arguments decoded from JSON string to object")
 
-	noArgs := blocks[2].(map[string]any)
+	noArgs := asMap(t, blocks[2])
 	require.Equal(t, map[string]any{}, noArgs["input"],
 		"empty arguments become an empty object, not a nil input")
 
-	results := msgs[2].(map[string]any)
+	results := asMap(t, msgs[2])
 	require.Equal(t, "user", results["role"], "tool results are carried by a user message")
-	resultBlocks := results["content"].([]any)
+	resultBlocks := asList(t, results["content"])
 	require.Len(t, resultBlocks, 2, "consecutive tool results merge into one message")
-	require.Equal(t, "tool_result", resultBlocks[0].(map[string]any)["type"])
-	require.Equal(t, "call_a", resultBlocks[0].(map[string]any)["tool_use_id"])
-	require.Equal(t, "12C", resultBlocks[0].(map[string]any)["content"])
+	require.Equal(t, "tool_result", asMap(t, resultBlocks[0])["type"])
+	require.Equal(t, "call_a", asMap(t, resultBlocks[0])["tool_use_id"])
+	require.Equal(t, "12C", asMap(t, resultBlocks[0])["content"])
 }
 
 func TestTranslateMessages_PlainChatUnchanged(t *testing.T) {
@@ -224,7 +224,7 @@ func TestTranslate_AcceptsGoTypedSlices(t *testing.T) {
 	})
 	require.Equal(t, "be terse", system, "system hoisted from a Go-typed slice")
 	require.Len(t, msgs, 2)
-	require.Equal(t, "user", msgs[0].(map[string]any)["role"])
+	require.Equal(t, "user", asMap(t, msgs[0])["role"])
 
 	// Same normalization for tools.
 	tools := translateTools([]map[string]any{
@@ -232,8 +232,8 @@ func TestTranslate_AcceptsGoTypedSlices(t *testing.T) {
 	})
 	list, ok := tools.([]any)
 	require.True(t, ok)
-	require.Equal(t, "f", list[0].(map[string]any)["name"])
-	require.NotContains(t, list[0].(map[string]any), "function")
+	require.Equal(t, "f", asMap(t, list[0])["name"])
+	require.NotContains(t, asMap(t, list[0]), "function")
 
 	// And for a Go-typed tool_calls array inside an assistant message.
 	msgs, _ = translateMessages([]map[string]any{
@@ -244,10 +244,10 @@ func TestTranslate_AcceptsGoTypedSlices(t *testing.T) {
 		}},
 	})
 	require.Len(t, msgs, 1)
-	blocks := msgs[0].(map[string]any)["content"].([]any)
+	blocks := asList(t, asMap(t, msgs[0])["content"])
 	require.Len(t, blocks, 1)
-	require.Equal(t, "tool_use", blocks[0].(map[string]any)["type"])
-	require.Equal(t, map[string]any{"k": "v"}, blocks[0].(map[string]any)["input"])
+	require.Equal(t, "tool_use", asMap(t, blocks[0])["type"])
+	require.Equal(t, map[string]any{"k": "v"}, asMap(t, blocks[0])["input"])
 }
 
 func TestAnthropicBody_SessionShapedHistory(t *testing.T) {
@@ -269,7 +269,23 @@ func TestAnthropicBody_SessionShapedHistory(t *testing.T) {
 	require.True(t, ok, "messages normalized to []any for the encoder")
 	require.Len(t, list, 3, "system removed from the array")
 	for _, m := range list {
-		require.NotEqual(t, "system", m.(map[string]any)["role"],
+		require.NotEqual(t, "system", asMap(t, m)["role"],
 			"no system role may remain in the array")
 	}
+}
+
+// asMap and asList assert the shape of a translated element so a mismatch
+// fails the test instead of panicking inside it.
+func asMap(t *testing.T, v any) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	require.True(t, ok, "want map[string]any, got %T", v)
+	return m
+}
+
+func asList(t *testing.T, v any) []any {
+	t.Helper()
+	l, ok := v.([]any)
+	require.True(t, ok, "want []any, got %T", v)
+	return l
 }

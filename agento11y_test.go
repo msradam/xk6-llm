@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grafana/agento11y/go/agento11y"
 	"github.com/grafana/agento11y/go/agento11y/model"
 	agento11yv1 "github.com/grafana/agento11y/go/proto/agento11y/v1"
 	"github.com/grafana/agento11y/go/proto/agento11y/wire"
@@ -62,14 +64,14 @@ func TestLoopbackEndpoint(t *testing.T) {
 
 func TestITLStats(t *testing.T) {
 	t.Parallel()
-	mean, p50, max := itlStats([]time.Duration{
+	mean, p50, maxITL := itlStats([]time.Duration{
 		10 * time.Millisecond,
 		30 * time.Millisecond,
 		20 * time.Millisecond,
 	})
 	require.InDelta(t, 20.0, mean, 0.001)
 	require.InDelta(t, 20.0, p50, 0.001)
-	require.InDelta(t, 30.0, max, 0.001)
+	require.InDelta(t, 30.0, maxITL, 0.001)
 }
 
 func TestSLOOutcome_SharedByMetricsAndExport(t *testing.T) {
@@ -235,7 +237,7 @@ func TestExportGeneration_RoundTrip(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	}}
 
-	c.exportGeneration(t.Context(), "stub-model", req, res)
+	c.exportGeneration(t.Context(), "stub-model", req, res, nil)
 	require.NoError(t, c.Flush())
 
 	select {
@@ -308,7 +310,7 @@ func TestParseChatRequest_GenerationLineageIsControlOnly(t *testing.T) {
 func TestNewGenerationID_Unique(t *testing.T) {
 	t.Parallel()
 	seen := make(map[string]bool, 1000)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		id := newGenerationID()
 		require.False(t, seen[id], "duplicate generation id: %s", id)
 		seen[id] = true
@@ -374,7 +376,7 @@ func TestExportGeneration_CarriesParentLineage(t *testing.T) {
 		tags:                map[string]string{"session_id": "conv-1"},
 	}
 
-	c.exportGeneration(t.Context(), "m", req, res)
+	c.exportGeneration(t.Context(), "m", req, res, nil)
 	require.NoError(t, c.Flush())
 
 	select {
@@ -467,65 +469,21 @@ func TestPromptMessages_ExcludesSystem(t *testing.T) {
 // rather than on a helper's return value.
 func exportOnce(t *testing.T, cfg *Agento11yConfig, req *chatRequest, content string) *agento11yv1.Generation {
 	t.Helper()
-
-	var (
-		mu  sync.Mutex
-		got *agento11yv1.Generation
-	)
-	done := make(chan struct{}, 1)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		ereq, err := wire.UnmarshalExportGenerationsJSON(body)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		results := make([]*agento11yv1.ExportGenerationResult, 0, len(ereq.GetGenerations()))
-		for _, g := range ereq.GetGenerations() {
-			mu.Lock()
-			got = g
-			mu.Unlock()
-			results = append(results, &agento11yv1.ExportGenerationResult{
-				GenerationId: g.GetId(), Accepted: true,
-			})
-		}
-		payload, _ := wire.MarshalExportGenerationsResponseJSON(
-			&agento11yv1.ExportGenerationsResponse{Results: results})
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(payload)
-		select {
-		case done <- struct{}{}:
-		default:
-		}
-	}))
-	t.Cleanup(srv.Close)
-
-	cfg.Endpoint = srv.URL
-	cfg.Protocol = "http"
-	cfg.AuthMode = "none"
-	c := &Client{cfg: &Options{Model: "m", Agento11y: cfg}, a11y: newAgento11yClient(cfg)}
-
-	c.exportGeneration(t.Context(), "m", req, &chatResult{
+	return exportOnceErr(t, cfg, req, &chatResult{
 		GenerationID: "gen-1", TTFT: 10 * time.Millisecond, Content: content,
 		Duration: 100 * time.Millisecond, PromptTokens: 5, CompletionTokens: 3,
-	})
-	require.NoError(t, c.Flush())
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no export received")
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	require.NotNil(t, got)
-	return got
+	}, nil)
 }
 
 // exportOnceResult is exportOnce with the caller supplying the whole result,
 // so a test can export a turn that called tools instead of answering.
 func exportOnceResult(t *testing.T, cfg *Agento11yConfig, req *chatRequest, res *chatResult) *agento11yv1.Generation {
+	t.Helper()
+	return exportOnceErr(t, cfg, req, res, nil)
+}
+
+// exportOnceErr is exportOnceResult for a call that failed with callErr.
+func exportOnceErr(t *testing.T, cfg *Agento11yConfig, req *chatRequest, res *chatResult, callErr error) *agento11yv1.Generation {
 	t.Helper()
 	var (
 		mu  sync.Mutex
@@ -561,10 +519,10 @@ func exportOnceResult(t *testing.T, cfg *Agento11yConfig, req *chatRequest, res 
 	t.Cleanup(srv.Close)
 
 	cfg.Endpoint = srv.URL
-	cfg.Protocol = "http"
-	cfg.AuthMode = "none"
+	cfg.Protocol = string(agento11y.GenerationExportProtocolHTTP)
+	cfg.AuthMode = string(agento11y.ExportAuthModeNone)
 	c := &Client{cfg: &Options{Model: "m", Agento11y: cfg}, a11y: newAgento11yClient(cfg)}
-	c.exportGeneration(t.Context(), "m", req, res)
+	c.exportGeneration(t.Context(), "m", req, res, callErr)
 	require.NoError(t, c.Flush())
 
 	select {
@@ -612,8 +570,10 @@ func TestExportGeneration_ToolPartsAreTyped(t *testing.T) {
 					"name": "query_events", "arguments": `{"window":"1h"}`,
 				}},
 			}},
-			map[string]any{"role": "tool", "tool_call_id": "c1", "name": "query_events",
-				"content": "boom", "is_error": true},
+			map[string]any{
+				"role": "tool", "tool_call_id": "c1", "name": "query_events",
+				"content": "boom", "is_error": true,
+			},
 		}}},
 		&chatResult{GenerationID: "gen-answer", Content: "A config regression caused it."})
 
@@ -740,6 +700,7 @@ func TestExportGeneration_EmptyCompletionStillExports(t *testing.T) {
 // catalog cannot count tools per version or report a tool change, because a
 // tool call only proves what was used.
 func TestToolDefinitions_OpenAIShape(t *testing.T) {
+	t.Parallel()
 	req := &chatRequest{body: map[string]any{"tools": []any{
 		map[string]any{
 			"type": "function",
@@ -771,6 +732,7 @@ func TestToolDefinitions_OpenAIShape(t *testing.T) {
 
 // Anthropic declares a tool flat, with input_schema instead of parameters.
 func TestToolDefinitions_AnthropicShape(t *testing.T) {
+	t.Parallel()
 	req := &chatRequest{body: map[string]any{"tools": []any{
 		map[string]any{
 			"name":         "get_weather",
@@ -792,6 +754,7 @@ func TestToolDefinitions_AnthropicShape(t *testing.T) {
 }
 
 func TestToolDefinitions_SkipsUnusableEntries(t *testing.T) {
+	t.Parallel()
 	req := &chatRequest{body: map[string]any{"tools": []any{
 		map[string]any{"function": map[string]any{"description": "no name"}},
 		"not an object",
@@ -805,6 +768,7 @@ func TestToolDefinitions_SkipsUnusableEntries(t *testing.T) {
 }
 
 func TestToolDefinitions_NilWhenNoToolsWereOffered(t *testing.T) {
+	t.Parallel()
 	if got := toolDefinitions(&chatRequest{body: map[string]any{}}); got != nil {
 		t.Errorf("got %+v, want nil", got)
 	}
@@ -815,6 +779,7 @@ func TestToolDefinitions_NilWhenNoToolsWereOffered(t *testing.T) {
 
 // The exported record has to carry them, since that is the whole point.
 func TestExportGeneration_CarriesToolDefinitions(t *testing.T) {
+	t.Parallel()
 	req := sysReq("You are terse.")
 	req.body["tools"] = []any{map[string]any{
 		"type":     "function",
@@ -822,10 +787,103 @@ func TestExportGeneration_CarriesToolDefinitions(t *testing.T) {
 	}}
 
 	gen := exportOnce(t, &Agento11yConfig{Synthetic: true, CaptureContent: true}, req, "answered")
-	if len(gen.Tools) != 1 {
-		t.Fatalf("exported %d tools, want 1", len(gen.Tools))
+	if len(gen.GetTools()) != 1 {
+		t.Fatalf("exported %d tools, want 1", len(gen.GetTools()))
 	}
-	if gen.Tools[0].Name != "lookup_doc" {
-		t.Errorf("exported tool name = %q", gen.Tools[0].Name)
+	if gen.GetTools()[0].GetName() != "lookup_doc" {
+		t.Errorf("exported tool name = %q", gen.GetTools()[0].GetName())
 	}
+}
+
+// A canary exists to catch failures. Before this, a failed call emitted a k6
+// error sample and nothing else, so a consumer reading Agent Observability
+// saw a canary that was quietly making fewer calls rather than one that was
+// failing. Verified against the local receiver on 2026-09-16: a 404 from the
+// upstream produced no conversation at all.
+func TestExportGeneration_FailedCallExportsError(t *testing.T) {
+	t.Parallel()
+
+	got := exportOnceErr(t, &Agento11yConfig{AgentName: "a", CaptureContent: true},
+		&chatRequest{body: map[string]any{"messages": []any{
+			map[string]any{"role": "user", "content": "hi"},
+		}}},
+		&chatResult{GenerationID: "gen-fail", Duration: 250 * time.Millisecond},
+		newChatError(errKindHTTP5xx, errors.New("http 503: overloaded")))
+
+	require.Equal(t, "gen-fail", got.GetId())
+	require.Contains(t, got.GetCallError(), "503", "the failure travels on the record, not in a gap")
+	require.Equal(t, errKindHTTP5xx, got.GetMetadata().AsMap()[MetaErrorType],
+		"the k6 error taxonomy is what a consumer groups by")
+	require.Zero(t, got.GetUsage().GetOutputTokens())
+}
+
+// In metadata-only mode the SDK strips the error text but keeps a category;
+// the k6 error_type is metadata, which capture modes do not filter, so a
+// consumer still learns what kind of failure it was.
+func TestExportGeneration_FailedCallMetadataOnly(t *testing.T) {
+	t.Parallel()
+
+	got := exportOnceErr(t, &Agento11yConfig{AgentName: "a"},
+		&chatRequest{body: map[string]any{}},
+		&chatResult{GenerationID: "gen-fail"},
+		newChatError(errKindTimeout, errors.New("context deadline exceeded")))
+
+	require.NotContains(t, got.GetCallError(), "deadline", "error text is content and stays home")
+	require.Equal(t, errKindTimeout, got.GetMetadata().AsMap()[MetaErrorType])
+}
+
+// Mode describes how the call was made. The SDK names the operation from it
+// (generateText vs streamText), so a stream: false call recorded as STREAM
+// would misreport what the canary did.
+func TestExportGeneration_ModeFollowsStreamFlag(t *testing.T) {
+	t.Parallel()
+
+	stream := exportOnceResult(t, &Agento11yConfig{AgentName: "a"},
+		&chatRequest{body: map[string]any{}},
+		&chatResult{GenerationID: "gen-stream", TTFT: time.Millisecond, Duration: time.Second})
+	require.Equal(t, agento11yv1.GenerationMode_GENERATION_MODE_STREAM, stream.GetMode())
+
+	unary := exportOnceResult(t, &Agento11yConfig{AgentName: "a"},
+		&chatRequest{body: map[string]any{}, unary: true},
+		&chatResult{GenerationID: "gen-unary", Unary: true, Duration: time.Second})
+	require.Equal(t, agento11yv1.GenerationMode_GENERATION_MODE_SYNC, unary.GetMode())
+}
+
+// The sampling parameters a run sweeps are what distinguish its generations
+// downstream. They are read from the OpenAI-shaped request before any wire
+// translation, so one lookup covers every wire.
+func TestExportGeneration_CarriesRequestParams(t *testing.T) {
+	t.Parallel()
+
+	got := exportOnceResult(t, &Agento11yConfig{AgentName: "a"},
+		&chatRequest{body: map[string]any{
+			"max_tokens":  int64(128),
+			"temperature": 0.2,
+			"top_p":       0.9,
+			"tool_choice": map[string]any{"type": "function", "function": map[string]any{"name": "lookup"}},
+		}},
+		&chatResult{GenerationID: "gen-params", ThinkingTokens: 5, CompletionTokens: 9})
+
+	require.Equal(t, int64(128), got.GetMaxTokens())
+	require.InDelta(t, 0.2, got.GetTemperature(), 1e-9)
+	require.InDelta(t, 0.9, got.GetTopP(), 1e-9)
+	require.Equal(t, "lookup", got.GetToolChoice(), "an object tool_choice collapses to the function it names")
+	require.True(t, got.GetThinkingEnabled(), "reasoning tokens in the response are the only certain signal")
+
+	plain := exportOnceResult(t, &Agento11yConfig{AgentName: "a"},
+		&chatRequest{body: map[string]any{"tool_choice": "auto"}},
+		&chatResult{GenerationID: "gen-plain"})
+	require.Equal(t, "auto", plain.GetToolChoice())
+	require.False(t, plain.GetThinkingEnabled())
+	require.Zero(t, plain.GetMaxTokens())
+}
+
+func TestExportGeneration_CarriesCacheWriteTokens(t *testing.T) {
+	t.Parallel()
+
+	got := exportOnceResult(t, &Agento11yConfig{AgentName: "a"},
+		&chatRequest{body: map[string]any{}},
+		&chatResult{GenerationID: "gen-cache", PromptTokens: 2048, CachedTokens: 1900, CacheWriteTokens: 100})
+	require.Equal(t, int64(1900), got.GetUsage().GetCacheReadInputTokens())
+	require.Equal(t, int64(100), got.GetUsage().GetCacheWriteInputTokens())
 }

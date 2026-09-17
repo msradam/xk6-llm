@@ -251,7 +251,7 @@ func TestParseAnthropicStream_CachedTokens(t *testing.T) {
 	// message_start.
 	srv := sseServer(t, time.Millisecond, []string{
 		`{"type":"message_start","message":{"id":"m","role":"assistant","usage":{` +
-			`"input_tokens":2048,"cache_read_input_tokens":1900,"output_tokens":0}}}`,
+			`"input_tokens":2048,"cache_read_input_tokens":1900,"cache_creation_input_tokens":100,"output_tokens":0}}}`,
 		anthText("hi"),
 		anthMessageDelta,
 		anthMessageStop,
@@ -262,4 +262,5 @@ func TestParseAnthropicStream_CachedTokens(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2048, res.PromptTokens)
 	require.Equal(t, 1900, res.CachedTokens)
+	require.Equal(t, 100, res.CacheWriteTokens, "cache writes are billed at a different rate, so a cost model needs the split")
 }

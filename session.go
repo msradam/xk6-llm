@@ -178,7 +178,7 @@ func (s *Session) parseSendArg(arg sobek.Value) (string, map[string]any, error) 
 		}
 		extras := make(map[string]any, len(v))
 		for k, val := range v {
-			if k == "content" || k == "messages" || k == "role" {
+			if k == "content" || k == fieldMessages || k == "role" {
 				continue
 			}
 			extras[k] = val

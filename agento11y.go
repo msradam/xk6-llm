@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -88,7 +90,7 @@ const (
 	MetaTPOTMs            = "llm.tpot_ms"
 	MetaChunks            = "llm.chunks"
 	MetaThinkingTokens    = "llm.thinking_tokens"
-	MetaCachedTokens      = "llm.cached_tokens"
+	MetaCachedTokens      = "llm.cached_tokens" // #nosec G101 -- a metadata key name, not a credential
 	MetaThinkingChunks    = "llm.thinking_chunks"
 	MetaTTFTextMs         = "llm.ttf_text_ms"
 	MetaResponseHeadersMs = "llm.response_headers_ms"
@@ -96,6 +98,10 @@ const (
 	MetaEnergyJ           = "llm.energy_j"
 	MetaGoodput           = "llm.goodput"
 	MetaAborted           = "llm.aborted"
+	// MetaErrorType carries the k6 error_type of a failed call, so a consumer
+	// can split timeouts from 5xx without parsing the error text, which is
+	// stripped in metadata-only mode anyway.
+	MetaErrorType = "llm.error_type"
 )
 
 // parseParentIDs accepts a single id or an array of ids.
@@ -197,10 +203,14 @@ func parseAgento11y(raw any) (*Agento11yConfig, error) {
 	}
 
 	if cfg.Endpoint == "" {
-		return nil, fmt.Errorf("llm.Client: 'agento11y.endpoint' is required")
+		return nil, errors.New("llm.Client: 'agento11y.endpoint' is required")
 	}
+	// A string switch on purpose: otel is a valid SDK protocol that this
+	// extension does not offer, so an exhaustive typed switch would be wrong.
 	switch cfg.Protocol {
-	case "http", "grpc", "none":
+	case string(agento11y.GenerationExportProtocolHTTP),
+		string(agento11y.GenerationExportProtocolGRPC),
+		string(agento11y.GenerationExportProtocolNone):
 	default:
 		return nil, fmt.Errorf("llm.Client: 'agento11y.protocol' must be http, grpc, or none, got %q", cfg.Protocol)
 	}
@@ -254,12 +264,18 @@ func newAgento11yClient(cfg *Agento11yConfig) *agento11y.Client {
 	})
 }
 
-// exportGeneration ships one generation record for a completed chat call.
+// exportGeneration ships one generation record for a chat call, successful or
+// not. callErr is the error the call failed with, or nil.
 //
-// Failures are reported through the existing k6 metric set rather than failing
-// the iteration: a telemetry sink that can break a load test is worse than one
-// that drops records.
-func (c *Client) exportGeneration(ctx context.Context, modelName string, req *chatRequest, res *chatResult) {
+// A failed call exports too. A canary exists to catch failures, and a
+// consumer that only ever sees the successful calls of a canary that is
+// hitting 5xx has been told nothing. The record carries the error text (or
+// its category, in metadata-only mode) and the k6 error_type as metadata.
+//
+// Export failures are reported through the existing k6 metric set rather than
+// failing the iteration: a telemetry sink that can break a load test is worse
+// than one that drops records.
+func (c *Client) exportGeneration(ctx context.Context, modelName string, req *chatRequest, res *chatResult, callErr error) {
 	if c.a11y == nil || c.cfg.Agento11y == nil {
 		return
 	}
@@ -282,9 +298,19 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 		StartedAt:           startedAt,
 	}
 
-	_, rec := c.a11y.StartStreamingGeneration(ctx, start)
+	// Mode is how the call was made, not how the extension measured it: a
+	// stream: false call is a SYNC generation and the SDK names the operation
+	// (generateText vs streamText) from it.
+	startGen := c.a11y.StartStreamingGeneration
+	if res.Unary {
+		startGen = c.a11y.StartGeneration
+	}
+	_, rec := startGen(ctx, start)
 	if res.TTFT > 0 {
 		rec.SetFirstTokenAt(startedAt.Add(res.TTFT))
+	}
+	if callErr != nil {
+		rec.SetCallError(callErr)
 	}
 
 	gen := agento11y.Generation{
@@ -298,8 +324,9 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 			OutputTokens: int64(res.CompletionTokens),
 			TotalTokens:  int64(res.PromptTokens + res.CompletionTokens),
 			// Sub-buckets of the totals above, never additive.
-			ReasoningTokens:      int64(res.ThinkingTokens),
-			CacheReadInputTokens: int64(res.CachedTokens),
+			ReasoningTokens:       int64(res.ThinkingTokens),
+			CacheReadInputTokens:  int64(res.CachedTokens),
+			CacheWriteInputTokens: int64(res.CacheWriteTokens),
 		},
 		StartedAt:   startedAt,
 		CompletedAt: startedAt.Add(res.Duration),
@@ -307,6 +334,10 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 		Metadata:    c.generationMetadata(res),
 		Tools:       toolDefinitions(req),
 	}
+	if callErr != nil {
+		gen.Metadata[MetaErrorType] = errorKind(callErr)
+	}
+	applyRequestParams(&gen, req, res)
 	sys := systemPrompt(req)
 
 	// Agent identity must not depend on content capture.
@@ -363,6 +394,54 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 	}
 }
 
+// applyRequestParams copies the sampling parameters the request declared into
+// the schema fields that exist for them. The catalog's version delta reports
+// changes to these, and a load test that sweeps temperature or max_tokens
+// wants each run to be distinguishable downstream.
+//
+// The key names follow the OpenAI chat shape the script writes, which the
+// wire translators later rename; reading them here, before translation, keeps
+// one lookup per field.
+func applyRequestParams(gen *agento11y.Generation, req *chatRequest, res *chatResult) {
+	for _, key := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens"} {
+		if f, ok := asFloat(req.body[key]); ok && f > 0 {
+			n := int64(f)
+			gen.MaxTokens = &n
+			break
+		}
+	}
+	if f, ok := asFloat(req.body["temperature"]); ok {
+		gen.Temperature = &f
+	}
+	if f, ok := asFloat(req.body["top_p"]); ok {
+		gen.TopP = &f
+	}
+	// tool_choice is a string ("auto", "none", "required") or an object
+	// naming one function. The schema field is a string, so the object form
+	// collapses to the function it names.
+	switch tc := req.body["tool_choice"].(type) {
+	case string:
+		if tc != "" {
+			gen.ToolChoice = &tc
+		}
+	case map[string]any:
+		if fn, ok := tc["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok && name != "" {
+				gen.ToolChoice = &name
+			}
+		} else if name, ok := tc["name"].(string); ok && name != "" {
+			gen.ToolChoice = &name
+		}
+	}
+	// Reasoning is reported, not configured: a provider decides whether a
+	// model thinks, and the only certain signal is reasoning tokens or
+	// reasoning chunks in the response.
+	if res.ThinkingTokens > 0 || res.ThinkingChunks > 0 {
+		enabled := true
+		gen.ThinkingEnabled = &enabled
+	}
+}
+
 // providerName labels the generation with the wire it was measured over, which
 // is the only provider identity the extension can know for certain — a
 // base_url may point at a gateway, a proxy, or a self-hosted server.
@@ -377,14 +456,10 @@ func (c *Client) providerName() string {
 func (c *Client) generationTags(req *chatRequest) map[string]string {
 	acfg := c.cfg.Agento11y
 	tags := make(map[string]string, len(acfg.Tags)+len(req.tags)+3)
-	for k, v := range acfg.Tags {
-		tags[k] = v
-	}
+	maps.Copy(tags, acfg.Tags)
 	// Request-scoped tags win over client-scoped ones, matching how the k6
 	// metric tags resolve.
-	for k, v := range req.tagSet() {
-		tags[k] = v
-	}
+	maps.Copy(tags, req.tagSet())
 	if acfg.Synthetic {
 		tags[SyntheticTagKey] = "true"
 		tags[SyntheticProducerTagKey] = syntheticProducer
@@ -401,10 +476,10 @@ func (c *Client) generationMetadata(res *chatResult) map[string]any {
 		meta[MetaTTFTMs] = msOf(res.TTFT)
 	}
 	if len(res.ITL) > 0 {
-		mean, p50, max := itlStats(res.ITL)
+		mean, p50, maxITL := itlStats(res.ITL)
 		meta[MetaITLMeanMs] = mean
 		meta[MetaITLP50Ms] = p50
-		meta[MetaITLMaxMs] = max
+		meta[MetaITLMaxMs] = maxITL
 		meta[MetaITLSamples] = len(res.ITL)
 	}
 	if res.TPOTDerivable() {
@@ -440,10 +515,10 @@ func (c *Client) generationMetadata(res *chatResult) map[string]any {
 
 // itlStats returns mean, median, and max in milliseconds. The caller has
 // already checked for a non-empty slice.
-func itlStats(itl []time.Duration) (mean, p50, max float64) {
+func itlStats(itl []time.Duration) (float64, float64, float64) {
 	sorted := make([]time.Duration, len(itl))
 	copy(sorted, itl)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	slices.Sort(sorted)
 
 	var total time.Duration
 	for _, d := range sorted {
@@ -541,7 +616,7 @@ func systemPrompt(req *chatRequest) string {
 	var parts []string
 	for _, item := range raw {
 		m, ok := item.(map[string]any)
-		if !ok || m["role"] != "system" {
+		if !ok || m["role"] != roleSystem {
 			continue
 		}
 		if text, ok := m["content"].(string); ok && text != "" {
@@ -594,14 +669,14 @@ func promptMessages(req *chatRequest) []model.Message {
 		// The system instruction travels in Generation.SystemPrompt. Emitting
 		// it here too would duplicate it, and the role mapping below would
 		// mislabel it as a user turn.
-		if m["role"] == "system" {
+		if m["role"] == roleSystem {
 			continue
 		}
 		role := model.RoleUser
 		switch m["role"] {
-		case "assistant":
+		case roleAssistant:
 			role = model.RoleAssistant
-		case "tool":
+		case roleTool:
 			role = model.RoleTool
 		}
 		parts := messageParts(m, role)
@@ -644,13 +719,13 @@ func messageParts(m map[string]any, role model.Role) []model.Part {
 		}}
 	}
 
-	var parts []model.Part
-	if text, ok := m["content"].(string); ok && text != "" {
-		parts = append(parts, model.Part{Kind: model.PartKindText, Text: text})
-	}
 	// An assistant turn that only called tools has null content, so it used to
 	// be dropped whole along with its calls.
 	calls, _ := asAnySlice(m["tool_calls"])
+	parts := make([]model.Part, 0, len(calls)+1)
+	if text, ok := m["content"].(string); ok && text != "" {
+		parts = append(parts, model.Part{Kind: model.PartKindText, Text: text})
+	}
 	for _, raw := range calls {
 		tc, ok := raw.(map[string]any)
 		if !ok {

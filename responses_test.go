@@ -220,7 +220,7 @@ func TestResponsesBody_TranslatesChatShape(t *testing.T) {
 	input, ok := got["input"].([]any)
 	require.True(t, ok)
 	require.Len(t, input, 1, "the system message left the input array")
-	require.Equal(t, "user", input[0].(map[string]any)["role"])
+	require.Equal(t, "user", asMap(t, input[0])["role"])
 }
 
 func TestResponsesTools_AreFlat(t *testing.T) {
@@ -239,7 +239,7 @@ func TestResponsesTools_AreFlat(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, list, 3)
 
-	first := list[0].(map[string]any)
+	first := asMap(t, list[0])
 	require.Equal(t, "function", first["type"])
 	require.Equal(t, "get_weather", first["name"], "name is top-level, not nested")
 	require.Equal(t, "w", first["description"])
@@ -247,8 +247,8 @@ func TestResponsesTools_AreFlat(t *testing.T) {
 	require.NotContains(t, first, "function")
 
 	require.Equal(t, map[string]any{"type": "object", "properties": map[string]any{}},
-		list[1].(map[string]any)["parameters"], "no-arg tool gets an empty schema")
-	require.Equal(t, "already_flat", list[2].(map[string]any)["name"])
+		asMap(t, list[1])["parameters"], "no-arg tool gets an empty schema")
+	require.Equal(t, "already_flat", asMap(t, list[2])["name"])
 }
 
 func TestResponsesInput_AgentLoop(t *testing.T) {
@@ -268,14 +268,14 @@ func TestResponsesInput_AgentLoop(t *testing.T) {
 	// user, assistant text, function_call, function_call_output
 	require.Len(t, input, 4)
 
-	call := input[2].(map[string]any)
+	call := asMap(t, input[2])
 	require.Equal(t, "function_call", call["type"])
 	require.Equal(t, "call_a", call["call_id"])
 	require.Equal(t, "get_weather", call["name"])
 	require.Equal(t, `{"city":"Berlin"}`, call["arguments"],
 		"Responses keeps arguments as a JSON string, unlike Anthropic")
 
-	out := input[3].(map[string]any)
+	out := asMap(t, input[3])
 	require.Equal(t, "function_call_output", out["type"])
 	require.Equal(t, "call_a", out["call_id"])
 	require.Equal(t, "12C", out["output"])
