@@ -37,6 +37,8 @@ const client = new llm.Client({
 
 For a local receiver, run `agento11y local serve` from the [agento11y plugin](https://github.com/grafana/agento11y/tree/main/plugins/agento11y) and point `endpoint` at the URL it prints.
 
+Every `chat()` call exports one generation, and Agent Observability meters generations. A canary is a handful a day. A load test of a hundred thousand requests is a hundred thousand generations on the tenant it exports to, so leave `agento11y` off, or set `protocol: 'none'`, for runs where only the k6 metrics matter.
+
 ## What a record carries
 
 | Generation field | Source |
