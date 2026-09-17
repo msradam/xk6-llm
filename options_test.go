@@ -169,13 +169,19 @@ func TestParseCost(t *testing.T) {
 
 func TestCostModelUSD(t *testing.T) {
 	t.Parallel()
-	require.InDelta(t, 0, (*CostModel)(nil).USD(1000, 1000), 1e-12)
-	require.InDelta(t, 0, (&CostModel{}).USD(1000, 1000), 1e-12)
+	require.InDelta(t, 0, (*CostModel)(nil).USD(1000, 0, 1000), 1e-12)
+	require.InDelta(t, 0, (&CostModel{}).USD(1000, 0, 1000), 1e-12)
 	c := &CostModel{USDPerMInputTokens: 0.5, USDPerMOutputTokens: 1.5}
 	// 1M input → $0.50, 2M output → $3.00, total $3.50
-	require.InDelta(t, 3.5, c.USD(1_000_000, 2_000_000), 1e-9)
+	require.InDelta(t, 3.5, c.USD(1_000_000, 0, 2_000_000), 1e-9)
 	// Small request: 100 in, 200 out → 100 * 0.5e-6 + 200 * 1.5e-6 = 5e-5 + 3e-4 = 3.5e-4
-	require.InDelta(t, 0.00035, c.USD(100, 200), 1e-12)
+	require.InDelta(t, 0.00035, c.USD(100, 0, 200), 1e-12)
+
+	// Cached prompt tokens bill at their own rate when one is set, and at
+	// the input rate otherwise. 1M prompt of which 800k cached.
+	require.InDelta(t, 0.5, c.USD(1_000_000, 800_000, 0), 1e-9, "no cached rate: input rate applies to all of it")
+	c.USDPerMCachedInputTokens = 0.05
+	require.InDelta(t, 0.2*0.5+0.8*0.05, c.USD(1_000_000, 800_000, 0), 1e-9)
 }
 
 func TestParseOptionsEnergyIntegration(t *testing.T) {

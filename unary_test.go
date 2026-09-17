@@ -75,7 +75,7 @@ func TestDoChat_Unary(t *testing.T) {
 			checkReq: func(t *testing.T, _ *http.Request, body map[string]any) {
 				assert.Equal(t, false, body["stream"])
 			},
-			content: "hi there", prompt: 12, completion: 8, cached: 5, finish: "tool_use",
+			content: "hi there", prompt: 12 + 5, completion: 8, cached: 5, finish: "tool_use",
 			tools: []ToolCall{{ID: "toolu_1", Name: "lookup", Arguments: `{"id":42}`}},
 		},
 		{

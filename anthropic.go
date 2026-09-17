@@ -114,7 +114,7 @@ func anthropicBody(body map[string]any, model string, ignoreEOS bool) map[string
 		if translated != nil {
 			out["messages"] = translated
 		}
-		if system != "" {
+		if system != nil {
 			if _, exists := out["system"]; !exists {
 				out["system"] = system
 			}
@@ -199,9 +199,16 @@ func parseAnthropicStream(reqCtx context.Context, r io.Reader, start time.Time, 
 		switch ev.Type {
 		case "message_start":
 			if ev.Message != nil && ev.Message.Usage != nil {
-				res.PromptTokens = ev.Message.Usage.InputTokens
-				res.CachedTokens = ev.Message.Usage.CacheReadInputTokens
-				res.CacheWriteTokens = ev.Message.Usage.CacheCreationInputTok
+				// Anthropic's input_tokens excludes both cache buckets, where
+				// OpenAI's prompt_tokens includes cached_tokens. Measured on
+				// 2026-09-16: a 7466-token cached prefix reported input_tokens
+				// of 16. Normalised to the inclusive contract so prompt
+				// counts, cost and the export mean the same thing on every
+				// wire; the cache fields stay sub-buckets of the total.
+				u := ev.Message.Usage
+				res.PromptTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTok
+				res.CachedTokens = u.CacheReadInputTokens
+				res.CacheWriteTokens = u.CacheCreationInputTok
 				// Anthropic reports a running output count here too; keep the
 				// larger value seen so an early non-zero is not lost.
 				if ev.Message.Usage.OutputTokens > res.CompletionTokens {

@@ -13,6 +13,9 @@ declare module 'k6/x/llm' {
     usd_per_million_input_tokens?: number;
     /** Hosted-API pricing in USD per million generated tokens. */
     usd_per_million_output_tokens?: number;
+    /** Pricing for the cache-read sub-bucket of prompt tokens. Falls back to
+     *  the input rate. Hosted APIs bill cache hits at 10% to 50% of it. */
+    usd_per_million_cached_input_tokens?: number;
   }
 
   export interface EnergyModel {

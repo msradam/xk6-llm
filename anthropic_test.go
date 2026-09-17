@@ -260,7 +260,10 @@ func TestParseAnthropicStream_CachedTokens(t *testing.T) {
 
 	res, err := parseAnthropicStream(context.Background(), resp.Body, time.Now(), abortPolicy{})
 	require.NoError(t, err)
-	require.Equal(t, 2048, res.PromptTokens)
+	// input_tokens on this wire excludes the cache buckets; the result
+	// reports the inclusive total so it means what OpenAI's prompt_tokens
+	// means.
+	require.Equal(t, 2048+1900+100, res.PromptTokens)
 	require.Equal(t, 1900, res.CachedTokens)
 	require.Equal(t, 100, res.CacheWriteTokens, "cache writes are billed at a different rate, so a cost model needs the split")
 }

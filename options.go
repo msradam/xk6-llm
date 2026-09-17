@@ -43,6 +43,12 @@ type Options struct {
 type CostModel struct {
 	USDPerMInputTokens  float64
 	USDPerMOutputTokens float64
+	// USDPerMCachedInputTokens prices the cache-read sub-bucket of the
+	// prompt. Hosted APIs bill cache hits at a fraction of the input rate
+	// (Anthropic 10%, OpenAI 10% to 50%), so a cached workload costed at
+	// the full input rate is overstated by most of its prompt. Zero means
+	// the input rate applies.
+	USDPerMCachedInputTokens float64
 }
 
 // Empty reports whether the model would produce zero for any request.
@@ -50,12 +56,19 @@ func (c *CostModel) Empty() bool {
 	return c == nil || (c.USDPerMInputTokens <= 0 && c.USDPerMOutputTokens <= 0)
 }
 
-// USD returns the dollar cost for a request with the given token counts.
-func (c *CostModel) USD(promptTokens, completionTokens int) float64 {
+// USD returns the dollar cost for a request. cachedTokens is the cache-read
+// sub-bucket of promptTokens, never additive to it.
+func (c *CostModel) USD(promptTokens, cachedTokens, completionTokens int) float64 {
 	if c.Empty() {
 		return 0
 	}
-	return float64(promptTokens)*c.USDPerMInputTokens/1e6 +
+	fresh := max(promptTokens-cachedTokens, 0)
+	cachedRate := c.USDPerMCachedInputTokens
+	if cachedRate <= 0 {
+		cachedRate = c.USDPerMInputTokens
+	}
+	return float64(fresh)*c.USDPerMInputTokens/1e6 +
+		float64(cachedTokens)*cachedRate/1e6 +
 		float64(completionTokens)*c.USDPerMOutputTokens/1e6
 }
 
@@ -225,11 +238,15 @@ func parseNonNegative(raw any, name string, keys ...string) (map[string]float64,
 }
 
 func parseCost(raw any) (*CostModel, error) {
-	v, err := parseNonNegative(raw, "cost", "usd_per_million_input_tokens", "usd_per_million_output_tokens")
+	v, err := parseNonNegative(raw, "cost", "usd_per_million_input_tokens", "usd_per_million_output_tokens", "usd_per_million_cached_input_tokens")
 	if err != nil {
 		return nil, err
 	}
-	return &CostModel{USDPerMInputTokens: v["usd_per_million_input_tokens"], USDPerMOutputTokens: v["usd_per_million_output_tokens"]}, nil
+	return &CostModel{
+		USDPerMInputTokens:       v["usd_per_million_input_tokens"],
+		USDPerMOutputTokens:      v["usd_per_million_output_tokens"],
+		USDPerMCachedInputTokens: v["usd_per_million_cached_input_tokens"],
+	}, nil
 }
 
 func parseEnergy(raw any) (*EnergyModel, error) {

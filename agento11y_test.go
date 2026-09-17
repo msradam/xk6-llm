@@ -896,3 +896,14 @@ func TestExportGeneration_CarriesRequestIDAndServerTime(t *testing.T) {
 	require.Equal(t, "req_42", got.GetResponseId(), "the provider's id is what a support ticket keys on")
 	require.InDelta(t, 640.0, got.GetMetadata().AsMap()[MetaServerProcessingMs], 0.001)
 }
+
+func TestSystemPrompt_BlockContent(t *testing.T) {
+	t.Parallel()
+	req := &chatRequest{body: map[string]any{"messages": []any{
+		map[string]any{"role": "system", "content": []any{
+			map[string]any{"type": "text", "text": "rules", "cache_control": map[string]any{"type": "ephemeral"}},
+		}},
+		map[string]any{"role": "user", "content": "hi"},
+	}}}
+	require.Equal(t, "rules", systemPrompt(req), "a cached prompt still has a version identity")
+}

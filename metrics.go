@@ -270,7 +270,7 @@ func (c *Client) costOf(r *chatResult) (float64, bool) {
 		return r.ServerCost, true
 	}
 	if cm := c.cfg.Cost; !cm.Empty() {
-		return cm.USD(r.PromptTokens, r.CompletionTokens), true
+		return cm.USD(r.PromptTokens, r.CachedTokens, r.CompletionTokens), true
 	}
 	return 0, false
 }

@@ -58,7 +58,7 @@ Scripts always write OpenAI-shaped requests. The `wire` option picks the encodin
 
 On the Anthropic wire an OpenAI `response_format` of type `json_schema` becomes `output_config.format`; `json_object` has no equivalent and is dropped.
 
-Every wire measures the same things the same way: TTFT at the first content-bearing event (reasoning included), ITL between text deltas, token counts from the server's usage report. Reasoning models report `thinking_tokens` and `ttf_text_ms` so TPOT is computed over the text phase only.
+Every wire measures the same things the same way: TTFT at the first content-bearing event (reasoning included), ITL between text deltas, token counts from the server's usage report. `prompt_tokens` always includes the cache buckets, so on the Anthropic wire it is `input_tokens` plus cache reads and writes, which is what the API bills against. Reasoning models report `thinking_tokens` and `ttf_text_ms` so TPOT is computed over the text phase only.
 
 ## Metrics
 
@@ -80,7 +80,7 @@ Every metric is tagged `model`. Errors are additionally tagged `error_type`. Una
 | `llm_slo_ttft` | Rate | `ttft_ms <= slo.ttft_ms`. |
 | `llm_slo_tpot` | Rate | `tpot_ms <= slo.tpot_ms`. |
 | `llm_slo_e2el` | Rate | `duration_ms <= slo.e2el_ms`. |
-| `llm_cost_usd` | Trend | USD per request. Emitted only when `cost` is supplied. |
+| `llm_cost_usd` | Trend | USD per request. Emitted only when `cost` is supplied or the provider reports a charge. Cached prompt tokens bill at `usd_per_million_cached_input_tokens` when set. |
 | `llm_energy_j` | Trend | Estimated joules per request. Emitted only when `energy` is supplied. |
 | `llm_energy_j_per_token` | Trend | `llm_energy_j / completion_tokens`. |
 | `llm_tool_calls` | Counter | Tool invocations the model emitted. Omitted when zero. |
@@ -109,7 +109,7 @@ The names map onto the OpenTelemetry GenAI client metrics, which are still in de
   headers?:    Record<string, string>,
   wire?:       'openai' | 'anthropic' | 'responses' | 'providerwire-v4', // default: openai
   slo?:        { ttft_ms?, tpot_ms?, e2el_ms? },
-  cost?:       { usd_per_million_input_tokens?, usd_per_million_output_tokens? },
+  cost?:       { usd_per_million_input_tokens?, usd_per_million_output_tokens?, usd_per_million_cached_input_tokens? },
   energy?:     { j_per_input_token?, j_per_output_token?, idle_w? },
   agento11y?:  { endpoint, agent_name?, ... },  // see docs/agent-observability.md
 }
@@ -144,7 +144,7 @@ Returns a Promise resolving to:
   chunks:              number,
   prompt_tokens:       number,
   completion_tokens:   number,
-  cached_tokens:       number,    // prompt-cache read sub-bucket, when reported
+  cached_tokens:       number,    // prompt-cache read sub-bucket of prompt_tokens, when reported
   cache_write_tokens:  number,    // prompt-cache write sub-bucket (Anthropic)
   thinking_tokens:     number,    // reasoning sub-bucket of completion_tokens
   thinking_chunks:     number,

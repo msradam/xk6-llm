@@ -146,14 +146,20 @@ func translateToolChoice(raw any) any {
 //     merge into one user message, because Anthropic expects all tool results
 //     for a turn in a single message — splitting them trains the model to stop
 //     making parallel calls.
-func translateMessages(raw any) ([]any, string) {
+func translateMessages(raw any) ([]any, any) {
 	list, ok := asAnySlice(raw)
 	if !ok {
-		return nil, ""
+		return nil, nil
 	}
 
 	out := make([]any, 0, len(list))
+	// System content arrives as a string, or as content blocks when the
+	// script attaches cache_control for prompt caching. Strings join into
+	// one system string; once any block appears, everything becomes blocks,
+	// because the API takes one shape or the other and rejects a system
+	// role message in either form.
 	var systemParts []string
+	var systemBlocks []any
 
 	// pendingResults accumulates consecutive tool results so they land in one
 	// user message.
@@ -179,6 +185,10 @@ func translateMessages(raw any) ([]any, string) {
 			flush()
 			if text, ok := msg["content"].(string); ok {
 				systemParts = append(systemParts, text)
+				continue
+			}
+			if blocks, ok := asAnySlice(msg["content"]); ok {
+				systemBlocks = append(systemBlocks, blocks...)
 				continue
 			}
 			out = append(out, msg)
@@ -231,7 +241,17 @@ func translateMessages(raw any) ([]any, string) {
 	}
 	flush()
 
-	return out, strings.Join(systemParts, "\n\n")
+	if len(systemBlocks) > 0 {
+		blocks := make([]any, 0, len(systemParts)+len(systemBlocks))
+		for _, text := range systemParts {
+			blocks = append(blocks, map[string]any{"type": "text", "text": text})
+		}
+		return out, append(blocks, systemBlocks...)
+	}
+	if joined := strings.Join(systemParts, "\n\n"); joined != "" {
+		return out, joined
+	}
+	return out, nil
 }
 
 // decodeToolArguments turns OpenAI's JSON-string arguments into an object.

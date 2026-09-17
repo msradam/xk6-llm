@@ -312,3 +312,26 @@ func TestAnthropicBody_ResponseFormatBecomesOutputConfig(t *testing.T) {
 	_, has := out["output_config"]
 	require.False(t, has)
 }
+
+// Prompt caching needs the system prompt as content blocks with a
+// cache_control marker. Verified against the live API on 2026-09-16: passing
+// that message through as role system returns 400 "use the top-level
+// 'system' parameter".
+func TestTranslateMessages_SystemBlocksHoisted(t *testing.T) {
+	t.Parallel()
+	block := map[string]any{"type": "text", "text": "rules", "cache_control": map[string]any{"type": "ephemeral"}}
+	msgs, system := translateMessages([]any{
+		map[string]any{"role": "system", "content": "terse"},
+		map[string]any{"role": "system", "content": []any{block}},
+		map[string]any{"role": "user", "content": "hi"},
+	})
+	require.Len(t, msgs, 1, "no system role message survives")
+	blocks, ok := system.([]any)
+	require.True(t, ok, "any block content turns the whole system prompt into blocks")
+	require.Len(t, blocks, 2)
+	require.Equal(t, map[string]any{"type": "text", "text": "terse"}, blocks[0])
+	require.Equal(t, block, blocks[1], "the cache_control marker survives")
+
+	_, none := translateMessages([]any{map[string]any{"role": "user", "content": "hi"}})
+	require.Nil(t, none, "no system content means no system field")
+}

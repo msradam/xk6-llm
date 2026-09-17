@@ -336,6 +336,9 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 			ReasoningTokens:       int64(res.ThinkingTokens),
 			CacheReadInputTokens:  int64(res.CachedTokens),
 			CacheWriteInputTokens: int64(res.CacheWriteTokens),
+			// Every wire's prompt count includes the cache buckets by the
+			// time it reaches here; see the Anthropic parser.
+			InputSemantics: model.TokenInputSemanticsInclusive,
 		},
 		StartedAt:   startedAt,
 		CompletedAt: startedAt.Add(res.Duration),
@@ -641,6 +644,16 @@ func systemPrompt(req *chatRequest) string {
 		}
 		if text, ok := m["content"].(string); ok && text != "" {
 			parts = append(parts, text)
+			continue
+		}
+		// Block form, which prompt caching requires: the text is the
+		// prompt, the cache_control marker is not.
+		blocks, _ := asAnySlice(m["content"])
+		for _, b := range blocks {
+			block, _ := b.(map[string]any)
+			if text, ok := block["text"].(string); ok && text != "" {
+				parts = append(parts, text)
+			}
 		}
 	}
 	return strings.Join(parts, "\n\n")

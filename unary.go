@@ -151,7 +151,8 @@ func parseAnthropicMessage(raw []byte) (*chatResult, error) {
 	}
 	res := &chatResult{Unary: true, FinishReason: body.StopReason}
 	if u := body.Usage; u != nil {
-		res.PromptTokens = u.InputTokens
+		// Inclusive prompt count, as in the streaming parser.
+		res.PromptTokens = u.InputTokens + u.CacheReadInputTokens + u.CacheWriteInputToks
 		res.CompletionTokens = u.OutputTokens
 		res.CachedTokens = u.CacheReadInputTokens
 		res.CacheWriteTokens = u.CacheWriteInputToks
