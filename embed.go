@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -29,17 +28,9 @@ type embedResult struct {
 }
 
 func (r *embedResult) toJSObject() map[string]any {
-	embs := make([]any, len(r.Embeddings))
-	for i, v := range r.Embeddings {
-		row := make([]any, len(v))
-		for j, x := range v {
-			row[j] = x
-		}
-		embs[i] = row
-	}
 	return map[string]any{
 		"model":         r.Model,
-		"embeddings":    embs,
+		"embeddings":    r.Embeddings,
 		"prompt_tokens": r.PromptTokens,
 		"duration_ms":   float64(r.Duration) / float64(time.Millisecond),
 		"inputs":        r.Inputs,
@@ -172,20 +163,11 @@ func (c *Client) doEmbed(ctx context.Context, req *embedRequest) (*embedResult, 
 	}
 
 	start := time.Now()
-	resp, err := c.http.Do(httpReq)
+	resp, err := c.send(httpReq)
 	if err != nil {
-		return nil, newChatError(classifyTransportError(err), err)
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
-		kind := errKindHTTP4xx
-		if resp.StatusCode >= 500 {
-			kind = errKindHTTP5xx
-		}
-		return nil, newChatError(kind, fmt.Errorf("http %d: %s", resp.StatusCode, bytes.TrimSpace(raw)))
-	}
 
 	var api embedAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&api); err != nil {

@@ -166,7 +166,8 @@ func TestEmbedResult_ToJSObject(t *testing.T) {
 	require.Equal(t, "m", out["model"])
 	require.Equal(t, 8, out["prompt_tokens"])
 	require.Equal(t, 2, out["inputs"])
-	embs, ok := out["embeddings"].([]any)
+	// sobek exports a Go slice of slices as a JS array of arrays as is.
+	embs, ok := out["embeddings"].([][]float64)
 	require.True(t, ok)
 	require.Len(t, embs, 2)
 }

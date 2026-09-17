@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -136,8 +135,7 @@ func parseProviderWireV4Stream(reqCtx context.Context, r io.Reader, start time.T
 	var buf strings.Builder
 	var lastContentT time.Time
 
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	sc := sseScanner(r)
 parts:
 	for sc.Scan() {
 		line := sc.Text()
@@ -178,12 +176,8 @@ parts:
 			return nil, fmt.Errorf("stream error: %s (%s)", part.Error.Message, part.Error.Code)
 		}
 	}
-	if err := sc.Err(); err != nil {
-		if abort.MaxDuration > 0 && reqCtx != nil && reqCtx.Err() != nil {
-			res.Aborted = true
-		} else {
-			return nil, fmt.Errorf("read stream: %w", err)
-		}
+	if err := finishScan(reqCtx, sc, abort, res); err != nil {
+		return nil, err
 	}
 	res.Duration = time.Since(start)
 	res.Content = buf.String()

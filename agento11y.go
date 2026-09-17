@@ -138,11 +138,7 @@ func parseParentIDs(raw any) ([]string, error) {
 // sees.
 func newGenerationID() string {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// A counter alone is still unique within the process; the random
-		// prefix only guards against collisions across VUs and runs.
-		return "xk6-" + strconv.FormatUint(generationSeq.Add(1), 36)
-	}
+	_, _ = rand.Read(b[:]) // never fails since Go 1.24
 	return "xk6-" + hex.EncodeToString(b[:]) + "-" + strconv.FormatUint(generationSeq.Add(1), 36)
 }
 

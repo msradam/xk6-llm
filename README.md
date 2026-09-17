@@ -221,7 +221,7 @@ k6 is a Go binary that executes test scripts written in JavaScript (TypeScript s
 | [`session.js`](./examples/session.js) | `llm.Session`: a 3-turn conversation with per-turn tags and token accounting. |
 | [`multi-turn.js`](./examples/multi-turn.js) | The same pattern with `Client` directly, at a constant arrival rate, so the dashboard can show TTFT degradation across turns and prefix-cache speedup (typically 5 to 15x by turn 5). |
 | [`tools.js`](./examples/tools.js) | Native tool calling. Pass `tools`, run the `tool_calls` the model returns, append `role: "tool"` results, call again. |
-| [`agent.js`](./examples/agent.js) | A text-protocol agent loop for servers without tool calling. Tags `agent_id` and `iteration` so the dashboard rolls up per-session totals and full-envelope p95. |
+| [`agent.js`](./examples/agent.js) | The tool loop run to completion: call, execute, feed back, repeat until the model answers or `MAX_ITERATIONS`. Tags `agent_id` and `iteration` so the dashboard rolls up per-session totals and full-envelope p95. |
 | [`rag.js`](./examples/rag.js) | Embed, retrieve, generate. Each phase has its own k6 Trend with independent SLO thresholds. |
 | [`abort.js`](./examples/abort.js) | Abandoned requests with `abort_after_ms` and `abort_after_tokens`, which is how a gateway's cancellation path gets tested. |
 | [`ab-providers.js`](./examples/ab-providers.js) | Two `Client` instances under two scenarios with different `cost` configs. Identical traffic, side-by-side latency and dollar-cost panels in one run. |

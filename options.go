@@ -198,92 +198,54 @@ func parseOptions(raw any) (*Options, error) {
 	return o, nil
 }
 
-func parseCost(raw any) (*CostModel, error) {
+// parseNonNegative reads the listed keys from an options object as
+// non-negative numbers. A missing key is left at zero, which every model here
+// treats as "disabled".
+func parseNonNegative(raw any, name string, keys ...string) (map[string]float64, error) {
 	m, ok := raw.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("llm: 'cost' must be an object, got %T", raw)
+		return nil, fmt.Errorf("llm: '%s' must be an object, got %T", name, raw)
 	}
-	c := &CostModel{}
-	for _, key := range []string{"usd_per_million_input_tokens", "usd_per_million_output_tokens"} {
+	out := make(map[string]float64, len(keys))
+	for _, key := range keys {
 		v, present := m[key]
 		if !present {
 			continue
 		}
 		f, ok := asFloat(v)
 		if !ok {
-			return nil, fmt.Errorf("llm: cost.%s must be a number, got %T", key, v)
+			return nil, fmt.Errorf("llm: %s.%s must be a number, got %T", name, key, v)
 		}
 		if f < 0 {
-			return nil, fmt.Errorf("llm: cost.%s must be non-negative, got %v", key, f)
+			return nil, fmt.Errorf("llm: %s.%s must be non-negative, got %v", name, key, f)
 		}
-		switch key {
-		case "usd_per_million_input_tokens":
-			c.USDPerMInputTokens = f
-		case "usd_per_million_output_tokens":
-			c.USDPerMOutputTokens = f
-		}
+		out[key] = f
 	}
-	return c, nil
+	return out, nil
+}
+
+func parseCost(raw any) (*CostModel, error) {
+	v, err := parseNonNegative(raw, "cost", "usd_per_million_input_tokens", "usd_per_million_output_tokens")
+	if err != nil {
+		return nil, err
+	}
+	return &CostModel{USDPerMInputTokens: v["usd_per_million_input_tokens"], USDPerMOutputTokens: v["usd_per_million_output_tokens"]}, nil
 }
 
 func parseEnergy(raw any) (*EnergyModel, error) {
-	m, ok := raw.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("llm: 'energy' must be an object, got %T", raw)
+	v, err := parseNonNegative(raw, "energy", "j_per_input_token", "j_per_output_token", "idle_w")
+	if err != nil {
+		return nil, err
 	}
-	e := &EnergyModel{}
-	for _, key := range []string{"j_per_input_token", "j_per_output_token", "idle_w"} {
-		v, present := m[key]
-		if !present {
-			continue
-		}
-		f, ok := asFloat(v)
-		if !ok {
-			return nil, fmt.Errorf("llm: energy.%s must be a number, got %T", key, v)
-		}
-		if f < 0 {
-			return nil, fmt.Errorf("llm: energy.%s must be non-negative, got %v", key, f)
-		}
-		switch key {
-		case "j_per_input_token":
-			e.JPerInputToken = f
-		case "j_per_output_token":
-			e.JPerOutputToken = f
-		case "idle_w":
-			e.IdleW = f
-		}
-	}
-	return e, nil
+	return &EnergyModel{JPerInputToken: v["j_per_input_token"], JPerOutputToken: v["j_per_output_token"], IdleW: v["idle_w"]}, nil
 }
 
 func parseSLO(raw any) (*SLOPredicate, error) {
-	m, ok := raw.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("llm: 'slo' must be an object, got %T", raw)
+	v, err := parseNonNegative(raw, "slo", "ttft_ms", "tpot_ms", "e2el_ms")
+	if err != nil {
+		return nil, err
 	}
-	s := &SLOPredicate{}
-	for _, key := range []string{"ttft_ms", "tpot_ms", "e2el_ms"} {
-		v, present := m[key]
-		if !present {
-			continue
-		}
-		f, ok := asFloat(v)
-		if !ok {
-			return nil, fmt.Errorf("llm: slo.%s must be a number, got %T", key, v)
-		}
-		if f < 0 {
-			return nil, fmt.Errorf("llm: slo.%s must be non-negative, got %v", key, f)
-		}
-		switch key {
-		case "ttft_ms":
-			s.TTFTMs = f
-		case "tpot_ms":
-			s.TPOTMs = f
-		case "e2el_ms":
-			s.E2ELMs = f
-		}
-	}
-	return s, nil
+	return &SLOPredicate{TTFTMs: v["ttft_ms"], TPOTMs: v["tpot_ms"], E2ELMs: v["e2el_ms"]}, nil
 }
 
 func asFloat(v any) (float64, bool) {

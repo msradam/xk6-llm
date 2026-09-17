@@ -1,12 +1,10 @@
 package llm
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"time"
 )
@@ -290,13 +288,12 @@ func responsesInput(raw any) ([]any, string) {
 // genuine per-token streaming. Comparing ITL across a reasoning and a
 // non-reasoning model therefore compares two different things.
 //
-//nolint:maintidx,nestif // one event loop per stream taxonomy; splitting it would separate the timing rules from the events they apply to
+//nolint:nestif // one event loop per stream taxonomy; splitting it would separate the timing rules from the events they apply to
 func parseResponsesStream(reqCtx context.Context, r io.Reader, start time.Time, abort abortPolicy) (*chatResult, error) {
 	res := &chatResult{}
 	var buf strings.Builder
 
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	sc := sseScanner(r)
 
 	var (
 		gotFirstToken bool
@@ -439,21 +436,10 @@ func parseResponsesStream(reqCtx context.Context, r io.Reader, start time.Time, 
 		}
 	}
 
-	if err := sc.Err(); err != nil {
-		if abort.MaxDuration > 0 && reqCtx != nil && reqCtx.Err() != nil {
-			res.Aborted = true
-		} else {
-			return nil, fmt.Errorf("read stream: %w", err)
-		}
+	if err := finishScan(reqCtx, sc, abort, res); err != nil {
+		return nil, err
 	}
-
-	if len(toolOrder) > 0 {
-		sort.Ints(toolOrder)
-		res.ToolCalls = make([]ToolCall, 0, len(toolOrder))
-		for _, idx := range toolOrder {
-			res.ToolCalls = append(res.ToolCalls, *toolBuf[idx])
-		}
-	}
+	res.ToolCalls = orderedToolCalls(toolBuf, toolOrder)
 
 	res.Duration = time.Since(start)
 	res.Content = buf.String()

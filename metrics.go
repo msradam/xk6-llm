@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.k6.io/k6/v2/js/modules"
+	"go.k6.io/k6/v2/lib"
 	"go.k6.io/k6/v2/metrics"
 )
 
@@ -104,249 +105,146 @@ func registerMetrics(vu modules.VU) (llmMetrics, error) {
 	return m, nil
 }
 
-// emit pushes the per-request metric samples for a successful chat completion.
-func (c *Client) emit(ctx context.Context, model string, r *chatResult, extraTags map[string]string) {
+// sampler builds samples that share one timestamp, tag set and metadata.
+type sampler struct {
+	now     time.Time
+	tags    *metrics.TagSet
+	meta    map[string]string
+	samples []metrics.Sample
+}
+
+func (s *sampler) add(m *metrics.Metric, v float64) {
+	s.samples = append(s.samples, metrics.Sample{
+		Time:       s.now,
+		TimeSeries: metrics.TimeSeries{Metric: m, Tags: s.tags},
+		Value:      v,
+		Metadata:   s.meta,
+	})
+}
+
+func (s *sampler) addBool(m *metrics.Metric, pass bool) {
+	v := 0.0
+	if pass {
+		v = 1.0
+	}
+	s.add(m, v)
+}
+
+// newSampler tags every sample with the VU's current tags plus model and the
+// request-scoped extras. It returns nil outside a running VU.
+func (c *Client) newSampler(model string, extraTags map[string]string) (*sampler, *lib.State) {
 	state := c.mod.vu.State()
 	if state == nil {
-		return
+		return nil, nil
 	}
 	ctm := state.Tags.GetCurrentValues()
 	tags := ctm.Tags.With("model", model)
 	for k, v := range extraTags {
 		tags = tags.With(k, v)
 	}
-	now := time.Now()
+	return &sampler{now: time.Now(), tags: tags, meta: ctm.Metadata}, state
+}
+
+// emit pushes the per-request metric samples for a successful chat completion.
+func (c *Client) emit(ctx context.Context, model string, r *chatResult, extraTags map[string]string) {
+	s, state := c.newSampler(model, extraTags)
+	if s == nil {
+		return
+	}
 	mx := c.mod.metrics
 
-	samples := []metrics.Sample{
-		{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.Requests, Tags: tags},
-			Value:      1,
-			Metadata:   ctm.Metadata,
-		},
-		{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.Duration, Tags: tags},
-			Value:      metrics.D(r.Duration),
-			Metadata:   ctm.Metadata,
-		},
-	}
+	s.add(mx.Requests, 1)
+	s.add(mx.Duration, metrics.D(r.Duration))
 	if !r.Unary {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.Chunks, Tags: tags},
-			Value:      float64(r.Chunks),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.Chunks, float64(r.Chunks))
 	}
 	if r.ResponseHeaders > 0 {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.ResponseHeaders, Tags: tags},
-			Value:      metrics.D(r.ResponseHeaders),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.ResponseHeaders, metrics.D(r.ResponseHeaders))
 	}
 	if r.TTFT > 0 {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.TTFT, Tags: tags},
-			Value:      metrics.D(r.TTFT),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.TTFT, metrics.D(r.TTFT))
 	}
 	for _, itl := range r.ITL {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.ITL, Tags: tags},
-			Value:      metrics.D(itl),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.ITL, metrics.D(itl))
 	}
 	if r.TPOTDerivable() {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.TPOT, Tags: tags},
-			Value:      metrics.D(r.TPOT()),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.TPOT, metrics.D(r.TPOT()))
 	}
 	if r.PromptTokens > 0 {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.PromptTokens, Tags: tags},
-			Value:      float64(r.PromptTokens),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.PromptTokens, float64(r.PromptTokens))
 	}
 	if r.CompletionTokens > 0 {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.CompletionTokens, Tags: tags},
-			Value:      float64(r.CompletionTokens),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.CompletionTokens, float64(r.CompletionTokens))
 	}
 	if r.Aborted {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.Aborted, Tags: tags},
-			Value:      1,
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.Aborted, 1)
 	}
 	if n := len(r.ToolCalls); n > 0 {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.ToolCalls, Tags: tags},
-			Value:      float64(n),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.ToolCalls, float64(n))
 	}
 
 	// Per-SLO and goodput samples, only when an SLO predicate was supplied.
 	if r.SLO != nil && !r.SLO.Empty() {
 		slo := r.sloOutcome()
 		if slo.TTFTChecked {
-			samples = append(samples, boolSample(now, mx.SLOTTFT, tags, ctm.Metadata, slo.TTFTPass))
+			s.addBool(mx.SLOTTFT, slo.TTFTPass)
 		}
 		if slo.TPOTChecked {
-			samples = append(samples, boolSample(now, mx.SLOTPOT, tags, ctm.Metadata, slo.TPOTPass))
+			s.addBool(mx.SLOTPOT, slo.TPOTPass)
 		}
 		if slo.E2ELChecked {
-			samples = append(samples, boolSample(now, mx.SLOE2EL, tags, ctm.Metadata, slo.E2ELPass))
+			s.addBool(mx.SLOE2EL, slo.E2ELPass)
 		}
-		samples = append(samples, boolSample(now, mx.Goodput, tags, ctm.Metadata, slo.AllPass))
+		s.addBool(mx.Goodput, slo.AllPass)
 	}
 
 	if cm := c.cfg.Cost; !cm.Empty() {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.CostUSD, Tags: tags},
-			Value:      cm.USD(r.PromptTokens, r.CompletionTokens),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.CostUSD, cm.USD(r.PromptTokens, r.CompletionTokens))
 	}
 
 	if em := c.cfg.Energy; !em.Empty() {
 		total := em.Joules(r.PromptTokens, r.CompletionTokens, r.Duration)
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.EnergyJ, Tags: tags},
-			Value:      total,
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.EnergyJ, total)
 		if r.CompletionTokens > 0 {
-			samples = append(samples, metrics.Sample{
-				Time:       now,
-				TimeSeries: metrics.TimeSeries{Metric: mx.EnergyJPerToken, Tags: tags},
-				Value:      total / float64(r.CompletionTokens),
-				Metadata:   ctm.Metadata,
-			})
+			s.add(mx.EnergyJPerToken, total/float64(r.CompletionTokens))
 		}
 	}
 
-	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{Samples: samples})
+	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{Samples: s.samples})
 }
 
-// emitError pushes an error sample tagged with the categorized error_type.
+// emitError pushes a chat error sample tagged with the categorized error_type.
 func (c *Client) emitError(ctx context.Context, model, errorType string, extraTags map[string]string) {
-	state := c.mod.vu.State()
-	if state == nil {
+	c.emitErrorOn(ctx, c.mod.metrics.Errors, model, errorType, extraTags)
+}
+
+// emitEmbedError is emitError for the embed metric; the error kinds are shared.
+func (c *Client) emitEmbedError(ctx context.Context, model, errorType string, extraTags map[string]string) {
+	c.emitErrorOn(ctx, c.mod.metrics.EmbedErrors, model, errorType, extraTags)
+}
+
+func (c *Client) emitErrorOn(ctx context.Context, metric *metrics.Metric, model, errorType string, extraTags map[string]string) {
+	s, state := c.newSampler(model, extraTags)
+	if s == nil {
 		return
 	}
-	ctm := state.Tags.GetCurrentValues()
-	tags := ctm.Tags.With("model", model).With("error_type", errorType)
-	for k, v := range extraTags {
-		tags = tags.With(k, v)
-	}
-	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{
-		Samples: []metrics.Sample{{
-			Time:       time.Now(),
-			TimeSeries: metrics.TimeSeries{Metric: c.mod.metrics.Errors, Tags: tags},
-			Value:      1,
-			Metadata:   ctm.Metadata,
-		}},
-	})
+	s.tags = s.tags.With("error_type", errorType)
+	s.add(metric, 1)
+	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{Samples: s.samples})
 }
 
 // emitEmbed pushes per-request samples for a successful /v1/embeddings call.
 func (c *Client) emitEmbed(ctx context.Context, r *embedResult, extraTags map[string]string) {
-	state := c.mod.vu.State()
-	if state == nil {
+	s, state := c.newSampler(r.Model, extraTags)
+	if s == nil {
 		return
 	}
-	ctm := state.Tags.GetCurrentValues()
-	tags := ctm.Tags.With("model", r.Model)
-	for k, v := range extraTags {
-		tags = tags.With(k, v)
-	}
-	now := time.Now()
 	mx := c.mod.metrics
-
-	samples := []metrics.Sample{
-		{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.EmbedRequests, Tags: tags},
-			Value:      1,
-			Metadata:   ctm.Metadata,
-		},
-		{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.EmbedDuration, Tags: tags},
-			Value:      metrics.D(r.Duration),
-			Metadata:   ctm.Metadata,
-		},
-		{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.EmbedInputs, Tags: tags},
-			Value:      float64(r.Inputs),
-			Metadata:   ctm.Metadata,
-		},
-	}
+	s.add(mx.EmbedRequests, 1)
+	s.add(mx.EmbedDuration, metrics.D(r.Duration))
+	s.add(mx.EmbedInputs, float64(r.Inputs))
 	if r.PromptTokens > 0 {
-		samples = append(samples, metrics.Sample{
-			Time:       now,
-			TimeSeries: metrics.TimeSeries{Metric: mx.EmbedTokens, Tags: tags},
-			Value:      float64(r.PromptTokens),
-			Metadata:   ctm.Metadata,
-		})
+		s.add(mx.EmbedTokens, float64(r.PromptTokens))
 	}
-	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{Samples: samples})
-}
-
-// emitEmbedError pushes an error sample for a failed embed call, tagged with
-// the categorized error_type (shares the kind taxonomy with chat errors).
-func (c *Client) emitEmbedError(ctx context.Context, model, errorType string, extraTags map[string]string) {
-	state := c.mod.vu.State()
-	if state == nil {
-		return
-	}
-	ctm := state.Tags.GetCurrentValues()
-	tags := ctm.Tags.With("model", model).With("error_type", errorType)
-	for k, v := range extraTags {
-		tags = tags.With(k, v)
-	}
-	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{
-		Samples: []metrics.Sample{{
-			Time:       time.Now(),
-			TimeSeries: metrics.TimeSeries{Metric: c.mod.metrics.EmbedErrors, Tags: tags},
-			Value:      1,
-			Metadata:   ctm.Metadata,
-		}},
-	})
-}
-
-func boolSample(t time.Time, metric *metrics.Metric, tags *metrics.TagSet, meta map[string]string, pass bool) metrics.Sample {
-	v := 0.0
-	if pass {
-		v = 1.0
-	}
-	return metrics.Sample{
-		Time:       t,
-		TimeSeries: metrics.TimeSeries{Metric: metric, Tags: tags},
-		Value:      v,
-		Metadata:   meta,
-	}
+	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{Samples: s.samples})
 }

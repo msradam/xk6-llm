@@ -645,21 +645,12 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 	}
 
 	start := time.Now()
-	resp, err := c.http.Do(httpReq)
+	resp, err := c.send(httpReq)
 	if err != nil {
-		return nil, newChatError(classifyTransportError(err), err)
+		return nil, err
 	}
 	headersAt := time.Now()
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
-		kind := errKindHTTP4xx
-		if resp.StatusCode >= 500 {
-			kind = errKindHTTP5xx
-		}
-		return nil, newChatError(kind, fmt.Errorf("http %d: %s", resp.StatusCode, bytes.TrimSpace(raw)))
-	}
 
 	if unary {
 		raw, err := readUnaryBody(resp.Body)
@@ -695,6 +686,63 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 	return res, nil
 }
 
+// sseScanner returns a line scanner sized for SSE payloads: a 64K initial
+// buffer with a 1M ceiling, which covers the largest single chunk any of the
+// wires has been observed to send.
+func sseScanner(r io.Reader) *bufio.Scanner {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	return sc
+}
+
+// finishScan decides what a scanner error means at the end of a stream. When
+// the abort deadline tripped, the read failure is the abort itself and the
+// partial result stands; anything else is a real read error.
+func finishScan(reqCtx context.Context, sc *bufio.Scanner, abort abortPolicy, res *chatResult) error {
+	err := sc.Err()
+	if err != nil && abort.MaxDuration > 0 && reqCtx != nil && reqCtx.Err() != nil {
+		res.Aborted = true
+		return nil //nolint:nilerr // the read error is the abort the caller asked for
+	}
+	if err != nil {
+		return fmt.Errorf("read stream: %w", err)
+	}
+	return nil
+}
+
+// orderedToolCalls assembles streamed tool-call fragments in index order.
+func orderedToolCalls(toolBuf map[int]*ToolCall, toolOrder []int) []ToolCall {
+	if len(toolOrder) == 0 {
+		return nil
+	}
+	sort.Ints(toolOrder)
+	out := make([]ToolCall, 0, len(toolOrder))
+	for _, idx := range toolOrder {
+		out = append(out, *toolBuf[idx])
+	}
+	return out
+}
+
+// send performs the request and classifies the failure modes every wire
+// shares: transport errors by kind, and a 4xx or 5xx status by class with the
+// body as the message.
+func (c *Client) send(httpReq *http.Request) (*http.Response, error) {
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, newChatError(classifyTransportError(err), err)
+	}
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		kind := errKindHTTP4xx
+		if resp.StatusCode >= 500 {
+			kind = errKindHTTP5xx
+		}
+		return nil, newChatError(kind, fmt.Errorf("http %d: %s", resp.StatusCode, bytes.TrimSpace(raw)))
+	}
+	return resp, nil
+}
+
 // parseStream consumes an SSE chat-completion stream and applies vLLM-aligned timing.
 //
 //   - TTFT is timed at the first chunk with non-empty choices[0].delta.content
@@ -716,8 +764,7 @@ func parseStream(reqCtx context.Context, r io.Reader, start time.Time, abort abo
 	res := &chatResult{}
 	var buf strings.Builder
 
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	sc := sseScanner(r)
 
 	var (
 		gotFirstToken bool
@@ -835,23 +882,10 @@ func parseStream(reqCtx context.Context, r io.Reader, start time.Time, abort abo
 			gotFirstToken = true
 		}
 	}
-	if err := sc.Err(); err != nil {
-		// If our deadline tripped, treat the read failure as an intentional
-		// abort and return the partial result.
-		if abort.MaxDuration > 0 && reqCtx != nil && reqCtx.Err() != nil {
-			res.Aborted = true
-		} else {
-			return nil, fmt.Errorf("read stream: %w", err)
-		}
+	if err := finishScan(reqCtx, sc, abort, res); err != nil {
+		return nil, err
 	}
-
-	if len(toolOrder) > 0 {
-		sort.Ints(toolOrder)
-		res.ToolCalls = make([]ToolCall, 0, len(toolOrder))
-		for _, idx := range toolOrder {
-			res.ToolCalls = append(res.ToolCalls, *toolBuf[idx])
-		}
-	}
+	res.ToolCalls = orderedToolCalls(toolBuf, toolOrder)
 
 	res.Duration = time.Since(start)
 	res.Content = buf.String()
