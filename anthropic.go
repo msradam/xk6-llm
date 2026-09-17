@@ -186,7 +186,7 @@ func parseAnthropicStream(reqCtx context.Context, r io.Reader, start time.Time, 
 
 		var ev anthropicEvent
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			return nil, fmt.Errorf("decode event: %w (data=%q)", err, data)
+			return nil, fmt.Errorf("decode event: %w", err)
 		}
 
 		if ev.Error != nil && ev.Error.Message != "" {

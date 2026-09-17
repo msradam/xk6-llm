@@ -9,9 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -233,15 +236,52 @@ func parseAgento11y(raw any) (*Agento11yConfig, error) {
 
 // loopbackEndpoint reports whether an endpoint targets the local host, which is
 // the only case where defaulting to cleartext is safe.
+//
+// The host is parsed and compared exactly. A prefix test passed
+// "localhost.evil.com" and "127.0.0.1.nip.io", which would have sent a bearer
+// token in clear to a remote host.
 func loopbackEndpoint(endpoint string) bool {
-	e := strings.ToLower(endpoint)
-	e = strings.TrimPrefix(strings.TrimPrefix(e, "http://"), "https://")
-	return strings.HasPrefix(e, "localhost") ||
-		strings.HasPrefix(e, "127.0.0.1") ||
-		strings.HasPrefix(e, "[::1]")
+	e := endpoint
+	if !strings.Contains(e, "://") {
+		e = "//" + e
+	}
+	u, err := url.Parse(e)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
+// exporters holds one SDK client per distinct export configuration for the
+// whole process. Every VU constructs its own llm.Client, and an SDK client
+// per VU meant a worker goroutine and a 2000-record queue per VU that nothing
+// ever shut down.
+var exporters sync.Map
+
 func newAgento11yClient(cfg *Agento11yConfig) *agento11y.Client {
+	key := fmt.Sprint(cfg.Endpoint, "|", cfg.Protocol, "|", cfg.AuthMode, "|", cfg.TenantID, "|",
+		cfg.BearerToken, "|", cfg.BasicUser, "|", cfg.BasicPassword, "|", cfg.Insecure != nil && *cfg.Insecure,
+		"|", cfg.Insecure == nil, "|", cfg.CaptureContent, "|", cfg.FlushInterval)
+	if existing, ok := exporters.Load(key); ok {
+		//nolint:forcetypeassert // only *agento11y.Client is ever stored
+		return existing.(*agento11y.Client)
+	}
+	created := buildAgento11yClient(cfg)
+	actual, loaded := exporters.LoadOrStore(key, created)
+	if loaded {
+		// Lost a construction race; stop the spare's worker.
+		_ = created.Shutdown(context.Background())
+	}
+	//nolint:forcetypeassert // only *agento11y.Client is ever stored
+	return actual.(*agento11y.Client)
+}
+
+func buildAgento11yClient(cfg *Agento11yConfig) *agento11y.Client {
 	insecure := loopbackEndpoint(cfg.Endpoint)
 	if cfg.Insecure != nil {
 		insecure = *cfg.Insecure

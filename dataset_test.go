@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.k6.io/k6/v2/lib/fsext"
 )
 
 func newTestRng(seed uint64) *rand.Rand {
@@ -72,19 +74,19 @@ func TestLoadDatasetItemsValidation(t *testing.T) {
 	t.Run("empty file", func(t *testing.T) {
 		t.Parallel()
 		p := writeJSONL(t, []string{""})
-		_, err := loadDatasetItems(p)
+		_, err := loadDatasetItems(fsext.NewOsFs(), p)
 		require.ErrorContains(t, err, "dataset is empty")
 	})
 	t.Run("invalid json", func(t *testing.T) {
 		t.Parallel()
 		p := writeJSONL(t, []string{`{not json`})
-		_, err := loadDatasetItems(p)
+		_, err := loadDatasetItems(fsext.NewOsFs(), p)
 		require.ErrorContains(t, err, "line 1: invalid json")
 	})
 	t.Run("missing messages", func(t *testing.T) {
 		t.Parallel()
 		p := writeJSONL(t, []string{`{"max_tokens": 10}`})
-		_, err := loadDatasetItems(p)
+		_, err := loadDatasetItems(fsext.NewOsFs(), p)
 		require.ErrorContains(t, err, "missing or empty 'messages'")
 	})
 	t.Run("ignores blank lines", func(t *testing.T) {
@@ -94,13 +96,13 @@ func TestLoadDatasetItemsValidation(t *testing.T) {
 			"",
 			`{"messages":[{"role":"user","content":"b"}]}`,
 		})
-		items, err := loadDatasetItems(p)
+		items, err := loadDatasetItems(fsext.NewOsFs(), p)
 		require.NoError(t, err)
 		require.Len(t, items, 2)
 	})
 	t.Run("nonexistent path", func(t *testing.T) {
 		t.Parallel()
-		_, err := loadDatasetItems(filepath.Join(t.TempDir(), "missing.jsonl"))
+		_, err := loadDatasetItems(fsext.NewOsFs(), filepath.Join(t.TempDir(), "missing.jsonl"))
 		require.ErrorContains(t, err, "open:")
 	})
 }
@@ -110,9 +112,9 @@ func TestLoadDatasetCacheSharing(t *testing.T) {
 	p := writeJSONL(t, []string{
 		`{"messages":[{"role":"user","content":"x"}]}`,
 	})
-	a, err := loadDatasetItems(p)
+	a, err := loadDatasetItems(fsext.NewOsFs(), p)
 	require.NoError(t, err)
-	b, err := loadDatasetItems(p)
+	b, err := loadDatasetItems(fsext.NewOsFs(), p)
 	require.NoError(t, err)
 	require.Same(t, &a[0], &b[0], "cache must return the same backing slice element")
 }
@@ -122,7 +124,7 @@ func TestDatasetItemToJSDeepCopy(t *testing.T) {
 	p := writeJSONL(t, []string{
 		`{"messages":[{"role":"user","content":"hello"}],"max_tokens":42}`,
 	})
-	items, err := loadDatasetItems(p)
+	items, err := loadDatasetItems(fsext.NewOsFs(), p)
 	require.NoError(t, err)
 	got1 := items[0].toJS()
 	got2 := items[0].toJS()
@@ -145,7 +147,7 @@ func makeDataset(t *testing.T, n int, shuffle bool, seed uint64) *Dataset {
 		lines[i] = fmt.Sprintf(`{"messages":[{"role":"user","content":"item-%d"}]}`, i)
 	}
 	p := writeJSONL(t, lines)
-	items, err := loadDatasetItems(p)
+	items, err := loadDatasetItems(fsext.NewOsFs(), p)
 	require.NoError(t, err)
 	order := make([]int, len(items))
 	for i := range order {
@@ -155,7 +157,7 @@ func makeDataset(t *testing.T, n int, shuffle bool, seed uint64) *Dataset {
 		rng := newTestRng(seed)
 		rng.Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
 	}
-	return &Dataset{path: p, items: items, order: order}
+	return &Dataset{path: p, items: items, order: order, cursor: new(atomic.Uint64)}
 }
 
 func TestDatasetNextWraps(t *testing.T) {

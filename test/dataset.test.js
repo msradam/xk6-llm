@@ -2,11 +2,13 @@
 // via the validate workflow.
 import llm from 'k6/x/llm';
 
+if (typeof llm.Dataset !== 'function') {
+  throw new Error('llm.Dataset constructor missing');
+}
+// Init context, like open(): that is when k6 records what a script reads.
+const ds = new llm.Dataset({ path: '../examples/data/sample-prompts.jsonl' });
+
 export default function () {
-  if (typeof llm.Dataset !== 'function') {
-    throw new Error('llm.Dataset constructor missing');
-  }
-  const ds = new llm.Dataset({ path: 'examples/data/sample-prompts.jsonl' });
   if (typeof ds.size !== 'function') throw new Error('dataset.size missing');
   if (typeof ds.next !== 'function') throw new Error('dataset.next missing');
   if (typeof ds.at   !== 'function') throw new Error('dataset.at missing');

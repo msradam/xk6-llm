@@ -1,7 +1,9 @@
 package llm
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.k6.io/k6/v2/js/modulestest"
+	"go.k6.io/k6/v2/lib"
 )
 
 // sseServer returns an httptest server that emits the supplied chunks as SSE,
@@ -196,7 +200,7 @@ func TestParseStream_AbortAfterMs(t *testing.T) {
 	defer cancel()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
 	require.NoError(t, err)
-	resp, err := c.http.Do(httpReq)
+	resp, err := c.httpClient().Do(httpReq)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
@@ -789,4 +793,62 @@ func TestParseStream_ServerCostAndTimings(t *testing.T) {
 	require.InDelta(t, 2.0, usd, 1e-9, "the model applies when the provider reports nothing")
 	_, ok = (&Client{cfg: &Options{}}).costOf(&chatResult{})
 	require.False(t, ok)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Model calls have to go through k6's own transport, or blacklistIPs,
+// blockHostnames, hosts, dns and the TLS options silently stop applying to
+// them. A k6 core maintainer and a security reviewer both found this
+// independently; xk6-sse, a community extension, already did it right.
+func TestHTTPClient_UsesVUTransport(t *testing.T) {
+	t.Parallel()
+	rt := modulestest.NewRuntime(t)
+	var used bool
+	rt.MoveToVUContext(&lib.State{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		used = true
+		return nil, errors.New("blocked by k6 transport")
+	})})
+	c := &Client{mod: &module{vu: rt.VU}, cfg: &Options{BaseURL: "http://10.0.0.1", Timeout: time.Second}}
+
+	_, err := c.doChat(context.Background(), &chatRequest{body: map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}})
+	require.ErrorContains(t, err, "blocked by k6 transport")
+	require.True(t, used, "the request must reach the VU's transport, where the blocklist lives")
+}
+
+// Go resends X-Api-Key, custom headers and the POST body on a cross-origin
+// redirect. No model API redirects a completion request.
+func TestHTTPClient_RefusesRedirects(t *testing.T) {
+	t.Parallel()
+	var leaked bool
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { leaked = true }))
+	t.Cleanup(target.Close)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := &Client{cfg: &Options{BaseURL: srv.URL, Wire: WireAnthropic, APIKey: "sk-secret", Timeout: 5 * time.Second}}
+	_, err := c.doChat(context.Background(), &chatRequest{body: map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}})
+	require.ErrorContains(t, err, "redirects are not followed")
+	require.False(t, leaked, "the key must not follow a redirect to another host")
+}
+
+func TestSend_CapsErrorBody(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 1<<20))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{cfg: &Options{BaseURL: srv.URL, Timeout: 5 * time.Second}}
+	_, err := c.doChat(context.Background(), &chatRequest{body: map[string]any{}})
+	require.Error(t, err)
+	require.Less(t, len(err.Error()), maxErrorBody+64, "an error body is echoed to logs, so it is bounded")
 }

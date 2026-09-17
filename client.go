@@ -28,11 +28,16 @@ import (
 
 // Client is the JS-facing OpenAI-compatible chat client.
 type Client struct {
-	mod  *module
-	cfg  *Options
+	mod *module
+	cfg *Options
+	// http overrides the client built from the VU state. Tests set it.
 	http *http.Client
 	a11y *agento11y.Client
 }
+
+// maxErrorBody bounds how much of an error response is read and echoed. An
+// error body can carry prompt text or key fragments, and nothing bounded it.
+const maxErrorBody = 2 << 10
 
 func (m *module) newClient(call sobek.ConstructorCall) *sobek.Object {
 	rt := m.vu.Runtime()
@@ -44,11 +49,7 @@ func (m *module) newClient(call sobek.ConstructorCall) *sobek.Object {
 	if err != nil {
 		common.Throw(rt, err)
 	}
-	c := &Client{
-		mod:  m,
-		cfg:  opts,
-		http: &http.Client{Timeout: opts.Timeout},
-	}
+	c := &Client{mod: m, cfg: opts}
 	if opts.Agento11y != nil && opts.Agento11y.Protocol != "none" {
 		c.a11y = newAgento11yClient(opts.Agento11y)
 	}
@@ -413,6 +414,7 @@ func (c *Client) Chat(req map[string]any) *sobek.Promise {
 		res, err := c.doChat(ctx, parsed)
 		if err != nil {
 			c.emitError(ctx, model, errorKind(err), parsed.tagSet())
+			c.emitGoodputMiss(ctx, model, parsed)
 			// A failed call is still a generation the canary made. Export it
 			// with the error so a consumer sees the failure, not a gap.
 			c.exportGeneration(ctx, model, parsed, &chatResult{
@@ -760,6 +762,13 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 	if err != nil {
 		return nil, newChatError(errKindStream, err)
 	}
+	if !res.Aborted {
+		// The parsers stop at the terminal event, before EOF. A body closed
+		// with bytes unread cannot go back to the pool, so every request
+		// opened a new connection and paid the handshake inside TTFT. An
+		// abort is the opposite case: closing early is the point.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	}
 	res.ResponseHeaders = headersAt.Sub(start)
 	readResponseHeaders(resp.Header, res)
 	return res, nil
@@ -833,16 +842,43 @@ func orderedToolCalls(toolBuf map[int]*ToolCall, toolOrder []int) []ToolCall {
 	return out
 }
 
+// httpClient returns a client on k6's own transport, so blacklistIPs,
+// blockHostnames, hosts, dns, the TLS options and the data_sent and
+// data_received metrics apply to model calls exactly as they do to k6/http.
+// A bare http.Client bypasses all of them, which on a shared runner is a way
+// around the blocklist.
+//
+// Redirects are refused: Go strips Authorization on a cross-origin redirect
+// but resends X-Api-Key, custom headers and the POST body, and no model API
+// legitimately redirects a completion request.
+func (c *Client) httpClient() *http.Client {
+	if c.http != nil {
+		return c.http
+	}
+	hc := &http.Client{
+		Timeout: c.cfg.Timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errors.New("llm: redirects are not followed")
+		},
+	}
+	if c.mod != nil {
+		if state := c.mod.vu.State(); state != nil && state.Transport != nil {
+			hc.Transport = state.Transport
+		}
+	}
+	return hc
+}
+
 // send performs the request and classifies the failure modes every wire
 // shares: transport errors by kind, and a 4xx or 5xx status by class with the
 // body as the message.
 func (c *Client) send(httpReq *http.Request) (*http.Response, error) {
-	resp, err := c.http.Do(httpReq)
+	resp, err := c.httpClient().Do(httpReq)
 	if err != nil {
 		return nil, newChatError(classifyTransportError(err), err)
 	}
 	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 		_ = resp.Body.Close()
 		kind := errKindHTTP4xx
 		if resp.StatusCode >= 500 {
@@ -908,7 +944,7 @@ func parseStream(reqCtx context.Context, r io.Reader, start time.Time, abort abo
 
 		var chunk sseChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return nil, fmt.Errorf("decode chunk: %w (data=%q)", err, data)
+			return nil, fmt.Errorf("decode chunk: %w", err)
 		}
 
 		chunk.Usage.apply(res)

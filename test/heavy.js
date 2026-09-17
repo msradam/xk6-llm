@@ -4,7 +4,7 @@
 // Scenarios run sequentially via startTime so results don't interfere:
 //   1. warmup:       3 iters, 1 VU, primes prefix cache
 //   2. concurrency:  1 -> 4 -> 16 VU constant-arrival sweeps
-//   3. poisson:      constant-arrival-rate 6 rps, 30s
+//   3. constant:     constant-arrival-rate 6 rps, 30s
 //   4. long_gen:     4 VUs, 512 max_tokens, exercises long ITL streams
 //
 // Run:
@@ -43,12 +43,12 @@ export const options = {
       exec: 'short', startTime: '85s',
       tags: { phase: 'conc_16' },
     },
-    poisson: {
+    constant: {
       executor: 'constant-arrival-rate',
       rate: 6, timeUnit: '1s', duration: '30s',
       preAllocatedVUs: 24, maxVUs: 64,
       exec: 'short', startTime: '110s',
-      tags: { phase: 'poisson' },
+      tags: { phase: 'constant' },
     },
     long_gen: {
       executor: 'constant-vus',

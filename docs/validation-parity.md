@@ -7,7 +7,7 @@ Same idle vLLM 0.21.0 server (Qwen2.5-72B-Instruct-AWQ, A100 80GB PCIe, RunPod) 
 | parameter | value |
 |---|---|
 | num_prompts | 100 |
-| request_rate | 2 rps Poisson |
+| request_rate | 2 rps mean. `vllm bench` draws Poisson arrivals; the k6 arrival-rate executor is evenly spaced |
 | max_concurrency | 8 (capped to avoid proxy stream limits; see notes) |
 | max_tokens | 128 (`ignore_eos=true`) |
 | seed | 42 |
@@ -34,7 +34,7 @@ The 56 ms gap reflects the input-length difference, not a measurement bug.
 - vllm bench: 63.8 input tokens/req
 - Per-token prefill: 56 ms / 22.4 tokens ≈ 2.5 ms/token, or ~400 tokens/sec prefill on Qwen 72B AWQ. Matches expected throughput for the model and GPU.
 
-If both tools sent identical prompts, mean TTFT would agree within the 2% tolerance.
+The per-token explanation above was never tested, and a later review gives a likelier cause; see Limitations.
 
 ## TPOT / ITL / E2EL
 
@@ -53,7 +53,7 @@ Root cause: the RunPod HTTPS proxy enforces per-tenant stream limits. vllm bench
 ./build/k6 run test/parity.js \
   -e LLM_BASE_URL=https://<pod>-8000.proxy.runpod.net/v1 \
   -e LLM_MODEL=Qwen/Qwen2.5-72B-Instruct-AWQ \
-  -e LLM_DATASET=examples/data/sample-prompts.jsonl \
+  -e LLM_DATASET=../examples/data/sample-prompts.jsonl \
   -e LLM_NUM_PROMPTS=100 -e LLM_RATE=2 -e LLM_MAX_TOKENS=128
 
 # vllm bench
@@ -67,3 +67,13 @@ vllm bench serve \
   --seed 42 --ignore-eos \
   --percentile-metrics ttft,tpot,itl,e2el
 ```
+
+## Limitations
+
+This run supports the TPOT, ITL and token-count claims. It does not support a TTFT claim, for three reasons found in review after it was run.
+
+- The two tools sent different prompts. xk6-llm replayed a 20-line corpus about five times over, and at the time every VU drew from its own cursor on the same seed, so VUs sent the same prompts in the same order. vLLM enables prefix caching by default, so a large share of the xk6-llm requests were probably answered from cache, while `vllm bench` random prompts are unique. That would explain a lower TTFT better than 22 fewer prefill tokens does. `Dataset` has since moved to one cursor per process, which removes the repetition across VUs but not the small corpus.
+- The arrival processes differ. Evenly spaced arrivals understate queueing and tail TTFT near saturation compared with Poisson arrivals at the same mean rate.
+- It is one model, one GPU, one rate, 100 requests, through a proxy, comparing means.
+
+A validation that would support TTFT sends byte-identical prompts from both tools with prefix caching off and then on, publishes `vllm:prefix_cache_hits`, covers rates from a quarter of saturation to past it and at least three input and output length shapes, repeats each point three times, and compares p50, p90 and p99.

@@ -76,7 +76,7 @@ Every metric is tagged `model`. Errors are additionally tagged `error_type`. Una
 | `llm_chunks_per_request` | Trend | Content chunks per request. |
 | `llm_prompt_tokens` | Counter | Server-reported `usage.prompt_tokens`. |
 | `llm_completion_tokens` | Counter | Server-reported `usage.completion_tokens`. |
-| `llm_goodput` | Rate | All SLOs met. Emitted only when an `slo` predicate is supplied. |
+| `llm_goodput` | Rate | All SLOs met. A failed or timed-out call counts as a miss. Emitted only when an `slo` predicate is supplied. |
 | `llm_slo_ttft` | Rate | `ttft_ms <= slo.ttft_ms`. |
 | `llm_slo_tpot` | Rate | `tpot_ms <= slo.tpot_ms`. |
 | `llm_slo_e2el` | Rate | `duration_ms <= slo.e2el_ms`. |
@@ -191,11 +191,11 @@ s.turn(); s.id(); s.messages(); s.tokens(); s.reset();
 
 ### `new llm.Dataset(opts)`
 
-Replays a JSONL prompt corpus. One line per request: `{"messages": [...], "max_tokens"?: N, ...}`. Loaded once per process and cached by absolute path.
+Replays a JSONL prompt corpus. One line per request: `{"messages": [...], "max_tokens"?: N, ...}`. Construct it in the init context, like `open()`: the file is read through k6's filesystem, so it is bundled by `k6 archive` and `k6 cloud`. It is loaded once per process, and every VU draws from one shared cursor, so no two VUs send the same prompt until the corpus wraps.
 
 ```ts
 {
-  path:     string,
+  path:     string,    // relative to the script, like open()
   seed?:    number,    // default: 42
   shuffle?: boolean,
 }
@@ -262,7 +262,7 @@ A Docker Compose stack with a pre-provisioned dashboard is in [`quickstart/`](./
 
 ## Validation
 
-Cross-validated against `vllm bench serve` on a real vLLM 0.21.0 server (Qwen2.5-72B-Instruct-AWQ, A100 80GB). TPOT/ITL/E2EL agree within 5% on identical workloads; token counts are bit-exact with vLLM `/metrics`. Numbers and methodology in [`docs/validation-parity.md`](./docs/validation-parity.md) and [`docs/validation-results.md`](./docs/validation-results.md).
+Cross-validated against `vllm bench serve` on a real vLLM 0.21.0 server (Qwen2.5-72B-Instruct-AWQ, A100 80GB). TPOT, ITL and end-to-end latency agree within 5% at the same mean rate and output length; token counts are bit-exact with vLLM `/metrics`. The run does not support a TTFT claim, for reasons the parity doc sets out. Numbers and methodology in [`docs/validation-parity.md`](./docs/validation-parity.md) and [`docs/validation-results.md`](./docs/validation-results.md).
 
 The `providerwire-v4` wire and the Agent Observability export are exercised against a Grafana AI Gateway build and an `agento11y local serve` receiver by a separate synthetic-agent harness, which uses this extension to catch buffered streams, dropped usage, leaked cancellations and lost records.
 
@@ -271,6 +271,8 @@ The `providerwire-v4` wire and the Agent Observability export are exercised agai
 | xk6-llm | k6 | xk6 |
 |---|---|---|
 | v0.x | v2.0.0 to v2.2.0 | 1.4.3 |
+
+Model calls go through k6's own transport, so `blacklistIPs`, `blockHostnames`, `hosts`, `dns`, the TLS options and the `data_sent` and `data_received` metrics apply to them as they do to `k6/http`. Redirects are not followed.
 
 Grafana Cloud k6 runs a fixed set of extensions and does not build custom binaries, so this extension runs with k6 OSS, the k6 Operator, or a self-hosted runner. Results still reach Grafana through the Prometheus remote write or OpenTelemetry outputs.
 

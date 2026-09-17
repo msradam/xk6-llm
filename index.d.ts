@@ -300,7 +300,8 @@ declare module 'k6/x/llm' {
   }
 
   export interface DatasetOptions {
-    /** Path to a JSONL file. Each line: `{"messages": [...], "max_tokens"?: N, ...}`. */
+    /** Path to a JSONL file, relative to the script like open(). Each line:
+     *  `{"messages": [...], "max_tokens"?: N, ...}`. */
     path: string;
     /** Seed for the shuffle permutation. Defaults to 42. */
     seed?: number;
@@ -309,9 +310,9 @@ declare module 'k6/x/llm' {
   }
 
   /**
-   * Replayable corpus of chat requests. Loaded once per process and shared
-   * across VUs by absolute path; each instance carries its own cursor and
-   * shuffle permutation.
+   * Replayable corpus of chat requests. Construct it in the init context. The
+   * file is read through k6's filesystem, loaded once per process, and every
+   * VU draws from one shared cursor per (path, seed, shuffle).
    */
   export class Dataset {
     constructor(opts: DatasetOptions);

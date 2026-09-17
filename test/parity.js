@@ -1,7 +1,8 @@
 // Parity-run driver for cross-validation against `vllm bench serve`.
 //
 // Both this script and `vllm bench serve` are pointed at the same idle vLLM
-// server, run sequentially with the same Poisson rate, num_prompts, and seed.
+// server, run sequentially at the same mean rate, num_prompts, and seed. vllm bench
+// draws Poisson arrivals; the k6 arrival-rate executor is evenly spaced.
 // The xk6 side replays a ShareGPT-derived JSONL via llm.Dataset; the vllm
 // side uses --dataset-name sharegpt with the same seed. Compare aggregate
 // distributions per docs/validation-parity.md.
@@ -10,7 +11,7 @@
 //   ./build/k6 run test/parity.js \
 //     -e LLM_BASE_URL=https://<pod>-8000.proxy.runpod.net/v1 \
 //     -e LLM_MODEL=Qwen/Qwen2.5-72B-Instruct-AWQ \
-//     -e LLM_DATASET=examples/data/sample-prompts.jsonl \
+//     -e LLM_DATASET=../examples/data/sample-prompts.jsonl \
 //     --summary-export=/tmp/xk6_parity.json
 import llm from 'k6/x/llm';
 
@@ -42,7 +43,7 @@ const client = new llm.Client({
 });
 
 const dataset = new llm.Dataset({
-  path: __ENV.LLM_DATASET ?? 'examples/data/sample-prompts.jsonl',
+  path: __ENV.LLM_DATASET ?? '../examples/data/sample-prompts.jsonl',
   seed: parseInt(__ENV.LLM_SEED ?? '42', 10),
   shuffle: true,
 });

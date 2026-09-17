@@ -325,7 +325,7 @@ func parseResponsesStream(reqCtx context.Context, r io.Reader, start time.Time, 
 
 		var ev responsesEvent
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			return nil, fmt.Errorf("decode event: %w (data=%q)", err, data)
+			return nil, fmt.Errorf("decode event: %w", err)
 		}
 
 		now := time.Now()

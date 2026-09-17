@@ -60,6 +60,10 @@ func TestLoopbackEndpoint(t *testing.T) {
 	for _, e := range []string{"agento11y.grafana.net", "https://example.com", "10.0.0.5:9400"} {
 		require.False(t, loopbackEndpoint(e), e)
 	}
+	// A prefix test passed all of these and sent credentials in clear.
+	for _, e := range []string{"localhost.evil.com:443", "127.0.0.1.nip.io:4317", "http://localhost-collector.corp:4317"} {
+		require.False(t, loopbackEndpoint(e), e)
+	}
 }
 
 func TestITLStats(t *testing.T) {

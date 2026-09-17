@@ -12,7 +12,7 @@ Run on 2026-05-14. Target: `vllm/vllm-openai:latest` (`vllm-0.21.0-f3716e14`) se
 | `conc_1`  | constant-vus         | 1 VU × 20s |
 | `conc_4`  | constant-vus         | 4 VUs × 20s |
 | `conc_16` | constant-vus         | 16 VUs × 20s |
-| `poisson` | constant-arrival-rate | 6 rps × 30s |
+| `constant` | constant-arrival-rate | 6 rps × 30s |
 | `long_gen`| constant-vus         | 4 VUs × 30s, 512 tokens |
 
 SLOs: `ttft_ms: 1500, tpot_ms: 80, e2el_ms: 15000`.

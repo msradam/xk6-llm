@@ -247,6 +247,23 @@ func (c *Client) emitErrorOn(ctx context.Context, metric *metrics.Metric, model,
 	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{Samples: s.samples})
 }
 
+// emitGoodputMiss counts a failed call against goodput when an SLO applies.
+//
+// Goodput is the share of requests that were useful. A request that errored or
+// timed out was not, and leaving it out made goodput rise as a server fell
+// over: the slowest requests turned into errors and left the denominator.
+func (c *Client) emitGoodputMiss(ctx context.Context, model string, req *chatRequest) {
+	if req.slo.Empty() {
+		return
+	}
+	s, state := c.newSampler(model, req.tagSet())
+	if s == nil {
+		return
+	}
+	s.addBool(c.mod.metrics.Goodput, false)
+	metrics.PushIfNotDone(ctx, state.Samples, metrics.ConnectedSamples{Samples: s.samples})
+}
+
 // emitEmbed pushes per-request samples for a successful /v1/embeddings call.
 func (c *Client) emitEmbed(ctx context.Context, r *embedResult, extraTags map[string]string) {
 	s, state := c.newSampler(r.Model, extraTags)

@@ -1,19 +1,17 @@
 package llm
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 
 	"github.com/grafana/sobek"
 	"go.k6.io/k6/v2/js/common"
+	"go.k6.io/k6/v2/lib/fsext"
 )
 
 // Dataset is a deterministic, replayable corpus of chat requests. Loaded once
@@ -22,10 +20,14 @@ import (
 // reading from the same file do not see the same order unless they share a
 // (path, seed) pair.
 type Dataset struct {
-	path   string
-	items  []datasetItem
-	order  []int
-	cursor atomic.Uint64
+	path  string
+	items []datasetItem
+	order []int
+	// cursor is shared by every Dataset built from the same (path, seed,
+	// shuffle) in the process. Each VU constructs its own Dataset, and a
+	// cursor per instance made every VU replay the same prompts in the same
+	// order, which a server with prefix caching answers from cache.
+	cursor *atomic.Uint64
 }
 
 // datasetItem stores the raw JSONL bytes; toJS re-decodes on each call so JS
@@ -41,32 +43,30 @@ func (it *datasetItem) toJS() map[string]any {
 }
 
 // dsCache holds shared *[]datasetItem keyed by absolute file path. Loading a
-// dataset twice from the same path is free.
-var dsCache sync.Map
+// dataset twice from the same path is free. dsCursors holds the shared
+// cursors, keyed by path, seed and shuffle.
+var (
+	dsCache   sync.Map
+	dsCursors sync.Map
+)
 
-func loadDatasetItems(path string) ([]datasetItem, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve path: %w", err)
-	}
+// loadDatasetItems reads the corpus through k6's filesystem, never the host's
+// directly: that is what puts the file in a `k6 archive` or `k6 cloud` bundle
+// and keeps a script on a shared runner inside the paths k6 allows it.
+func loadDatasetItems(fs fsext.Fs, abs string) ([]datasetItem, error) {
 	if v, ok := dsCache.Load(abs); ok {
 		if cached, ok := v.(*[]datasetItem); ok {
 			return *cached, nil
 		}
 	}
-	f, err := os.Open(abs) // #nosec G304 -- user-supplied dataset path is the feature
+	data, err := fsext.ReadFile(fs, abs)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
-	defer func() { _ = f.Close() }()
 
 	out := make([]datasetItem, 0, 256)
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	lineNo := 0
-	for sc.Scan() {
-		lineNo++
-		line := bytes.TrimSpace(sc.Bytes())
+	for i, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
 		}
@@ -74,17 +74,12 @@ func loadDatasetItems(path string) ([]datasetItem, error) {
 			Messages []json.RawMessage `json:"messages"`
 		}
 		if err := json.Unmarshal(line, &probe); err != nil {
-			return nil, fmt.Errorf("line %d: invalid json: %w", lineNo, err)
+			return nil, fmt.Errorf("line %d: invalid json: %w", i+1, err)
 		}
 		if len(probe.Messages) == 0 {
-			return nil, fmt.Errorf("line %d: missing or empty 'messages'", lineNo)
+			return nil, fmt.Errorf("line %d: missing or empty 'messages'", i+1)
 		}
-		buf := make([]byte, len(line))
-		copy(buf, line)
-		out = append(out, datasetItem{raw: buf})
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("read: %w", err)
+		out = append(out, datasetItem{raw: line})
 	}
 	if len(out) == 0 {
 		return nil, errors.New("dataset is empty")
@@ -139,7 +134,22 @@ func (m *module) newDataset(call sobek.ConstructorCall) *sobek.Object {
 	if err != nil {
 		common.Throw(rt, err)
 	}
-	items, err := loadDatasetItems(opts.Path)
+	// Files load in the init context only, like k6's own open(): that is when
+	// k6 records what a script reads so it can bundle it.
+	env := m.vu.InitEnv()
+	if env == nil {
+		common.Throw(rt, errors.New("llm.Dataset: construct it in the init context, outside the default function"))
+	}
+	// k6 always sets both. modulestest sets neither, so a unit test falls
+	// back to the host filesystem, which is all it has.
+	abs, fs := opts.Path, env.FileSystems["file"]
+	if env.CWD != nil {
+		abs = env.GetAbsFilePath(opts.Path)
+	}
+	if fs == nil {
+		fs = fsext.NewOsFs()
+	}
+	items, err := loadDatasetItems(fs, abs)
 	if err != nil {
 		common.Throw(rt, fmt.Errorf("llm.Dataset(%q): %w", opts.Path, err))
 	}
@@ -154,17 +164,20 @@ func (m *module) newDataset(call sobek.ConstructorCall) *sobek.Object {
 		rng.Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
 	}
 
-	ds := &Dataset{path: opts.Path, items: items, order: order}
+	key := fmt.Sprintf("%s|%d|%t", abs, opts.Seed, opts.Shuffle)
+	cursor, _ := dsCursors.LoadOrStore(key, new(atomic.Uint64))
+	//nolint:forcetypeassert // only *atomic.Uint64 is ever stored
+	ds := &Dataset{path: opts.Path, items: items, order: order, cursor: cursor.(*atomic.Uint64)}
 	return rt.ToValue(ds).ToObject(rt)
 }
 
 // Size returns the number of items in the dataset.
 func (d *Dataset) Size() int { return len(d.items) }
 
-// Next advances the internal cursor and returns the next request, wrapping at
-// the end. Concurrency-safe across VUs (within a single process) when the same
-// Dataset instance is reused; in k6 each VU constructs its own instance, so
-// "wrap" semantics apply per VU.
+// Next advances the shared cursor and returns the next request, wrapping at
+// the end. VUs in one process draw from one sequence, so no two of them send
+// the same prompt until the corpus wraps. Across k6 instances use At() with an
+// index derived from the execution context.
 func (d *Dataset) Next() map[string]any {
 	if len(d.items) == 0 {
 		return nil
@@ -191,7 +204,7 @@ func (d *Dataset) At(i int64) map[string]any {
 	return d.items[d.order[idx]].toJS()
 }
 
-// Reset rewinds the internal cursor so the next call to Next() returns the
-// first item again. Has no effect on the shuffle permutation or the cached
-// items themselves.
+// Reset rewinds the shared cursor so the next call to Next() returns the first
+// item again, for every VU drawing from it. Has no effect on the shuffle
+// permutation or the cached items themselves.
 func (d *Dataset) Reset() { d.cursor.Store(0) }
