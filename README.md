@@ -179,7 +179,7 @@ Exports queued Agent Observability records now. Call it at the end of an iterati
 
 ### `new llm.Session(client, opts)`
 
-A multi-turn conversation. Each `send()` appends the user message, calls `chat()`, and appends the assistant reply to the history. Every call is tagged `session_id` and `turn`, with `cache_state` set to `cold` on turn 1 and `warm` after, so the dashboard can show prefix-cache speedup across turns.
+A multi-turn conversation. Each `send()` appends the user message, calls `chat()`, and appends the assistant reply to the history. Every call is tagged `turn`, with `cache_state` set to `cold` on turn 1 and `warm` after, so the dashboard can show prefix-cache speedup across turns. The `session_id` rides as k6 sample metadata, not an indexed tag, because one series per conversation makes per-series percentiles meaningless; it still names the conversation in an exported generation.
 
 ```js
 const s = new llm.Session(client, { system: 'You are terse.' });

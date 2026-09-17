@@ -11,12 +11,11 @@
 # Open http://localhost:3000 (admin/admin) → Dashboards → xk6-llm.
 services:
   prometheus:
-    image: prom/prometheus:v3.0.1
+    image: prom/prometheus:v3.14.0
     container_name: xk6-llm-prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --web.enable-remote-write-receiver
-      - --enable-feature=native-histograms
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
@@ -24,7 +23,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:11.4.0
+    image: grafana/grafana:13.2.2
     container_name: xk6-llm-grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin

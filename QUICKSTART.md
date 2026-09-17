@@ -15,7 +15,7 @@ cd quickstart
 docker compose up -d
 ```
 
-Prometheus listens on `:9090` (with `remote_write_receiver` and native histograms enabled). Grafana listens on `:3000` with anonymous read access. The dashboard is auto-provisioned.
+Prometheus listens on `:9090` with the remote write receiver enabled. Grafana listens on `:3000` with anonymous read access. The dashboard is auto-provisioned.
 
 ```bash
 K6_PROMETHEUS_RW_TREND_STATS="p(50),p(95),p(99),min,max,avg,count,sum" \
@@ -32,7 +32,7 @@ Open [http://localhost:3000](http://localhost:3000) → Dashboards → **xk6-llm
 
 ## Use with an existing Grafana
 
-Enable `--web.enable-remote-write-receiver` and `--enable-feature=native-histograms` on Prometheus, then import `quickstart/grafana/dashboards/xk6-llm.json`.
+Enable `--web.enable-remote-write-receiver` on Prometheus, then import `quickstart/grafana/dashboards/xk6-llm.json`. Latency panels read seconds, which is the unit k6's Prometheus output writes for time metrics.
 
 ## Tear down
 

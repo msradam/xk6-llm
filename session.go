@@ -210,8 +210,8 @@ func (s *Session) injectSessionTags(req map[string]any, turn int) {
 		tags = make(map[string]any, 2)
 		req["tags"] = tags
 	}
-	if _, ok := tags["session_id"]; !ok {
-		tags["session_id"] = s.id
+	if _, ok := tags[tagSessionID]; !ok {
+		tags[tagSessionID] = s.id
 	}
 	if _, ok := tags["turn"]; !ok {
 		tags["turn"] = strconv.Itoa(turn)

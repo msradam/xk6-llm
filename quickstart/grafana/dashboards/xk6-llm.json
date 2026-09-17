@@ -379,7 +379,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "s",
           "custom": {
             "lineInterpolation": "smooth",
             "fillOpacity": 10
@@ -433,7 +433,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "s",
           "custom": {
             "lineInterpolation": "smooth",
             "fillOpacity": 5
@@ -625,7 +625,7 @@
       "description": "Lower values on turns 2 and beyond mean the server's prefix cache is doing real work. With multi-turn sessions and shared system prompts, the gap can be 5x to 15x.",
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "s",
           "custom": {
             "lineInterpolation": "smooth",
             "fillOpacity": 10

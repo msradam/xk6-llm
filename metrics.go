@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"go.k6.io/k6/v2/js/modules"
@@ -147,11 +148,30 @@ func (c *Client) newSampler(model string, extraTags map[string]string) (*sampler
 	}
 	ctm := state.Tags.GetCurrentValues()
 	tags := ctm.Tags.With("model", model)
+	meta := ctm.Metadata
 	for k, v := range extraTags {
-		tags = tags.With(k, v)
+		if k != tagSessionID {
+			tags = tags.With(k, v)
+			continue
+		}
+		// A session id is unique per conversation. As an indexed tag it made
+		// one time series per session, each holding a single sample, so an
+		// output that computes percentiles per series reported p50, p95 and
+		// p99 as the same number. k6 sample metadata is the place for a
+		// high-cardinality value: it travels with the sample and is not
+		// indexed. The map is copied because the VU owns the original.
+		meta = maps.Clone(meta)
+		if meta == nil {
+			meta = make(map[string]string, 1)
+		}
+		meta[tagSessionID] = v
 	}
-	return &sampler{now: time.Now(), tags: tags, meta: ctm.Metadata}, state
+	return &sampler{now: time.Now(), tags: tags, meta: meta}, state
 }
+
+// tagSessionID is the request tag llm.Session sets. It names the conversation
+// in an exported generation and rides as metadata, not a tag, on k6 samples.
+const tagSessionID = "session_id"
 
 // emit pushes the per-request metric samples for a successful chat completion.
 func (c *Client) emit(ctx context.Context, model string, r *chatResult, extraTags map[string]string) {

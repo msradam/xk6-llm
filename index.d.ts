@@ -279,9 +279,10 @@ declare module 'k6/x/llm' {
   /**
    * Multi-turn conversation wrapper. Each send() appends the user message,
    * dispatches a chat() call, and on resolution appends the assistant reply
-   * to history. Every call is auto-tagged `session_id`, `turn`, and a
-   * `cache_state` of `cold` (turn 1) or `warm` (later turns) unless the
-   * caller supplies its own.
+   * to history. Every call is auto-tagged `turn` and a `cache_state` of
+   * `cold` (turn 1) or `warm` (later turns) unless the caller supplies its
+   * own. The `session_id` rides as sample metadata, not an indexed tag, and
+   * names the conversation in an exported generation.
    */
   export class Session {
     constructor(client: Client, opts?: SessionOptions);

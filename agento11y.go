@@ -334,7 +334,7 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 
 	start := agento11y.GenerationStart{
 		ID:             res.GenerationID,
-		ConversationID: tags["session_id"],
+		ConversationID: tags[tagSessionID],
 		AgentName:      acfg.AgentName,
 		AgentVersion:   acfg.AgentVersion,
 		Model:          agento11y.ModelRef{Provider: c.providerName(), Name: modelName},
