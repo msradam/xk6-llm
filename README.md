@@ -278,7 +278,7 @@ Grafana Cloud k6 runs a fixed set of extensions and does not build custom binari
 
 ## Attribution
 
-This codebase was developed with assistance from [Claude Code](https://claude.com/claude-code). PRs are reviewed and merged by humans.
+This codebase was developed with assistance from [Claude Code](https://claude.com/claude-code).
 
 ## License
 
