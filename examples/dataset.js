@@ -16,7 +16,7 @@ const DURATION = __ENV.LLM_DURATION ?? '30s';
 
 export const options = {
   scenarios: {
-    poisson_replay: {
+    replay: {
       executor: 'constant-arrival-rate',
       rate: RATE,
       timeUnit: '1s',

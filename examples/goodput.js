@@ -30,7 +30,7 @@ export default async function () {
     max_tokens: 48,
     temperature: 0,
     cache_state: __ITER === 0 ? 'cold' : 'warm',
-    tags: { prompt: 'poisson-1s' },
+    tags: { prompt: 'constant-1s' },
   });
   console.log(
     `iter=${__ITER} cache=${__ITER === 0 ? 'cold' : 'warm'} ` +

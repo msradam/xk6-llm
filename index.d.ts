@@ -24,12 +24,50 @@ declare module 'k6/x/llm' {
     idle_w?: number;
   }
 
+  /**
+   * Export one Grafana Agent Observability generation record per chat() call.
+   * The extension keeps its own k6 metrics and timing; only the generation
+   * export path of the agento11y SDK runs.
+   */
+  export interface Agento11yOptions {
+    /** Generation-export base URL. The SDK appends the export path. */
+    endpoint: string;
+    /** Default "http". "none" disables export while keeping the config. */
+    protocol?: 'http' | 'grpc' | 'none';
+    /** Default "none". */
+    auth_mode?: 'none' | 'tenant' | 'bearer' | 'basic';
+    tenant_id?: string;
+    bearer_token?: string;
+    basic_user?: string;
+    basic_password?: string;
+    /** Permit cleartext export. Defaults to true for a loopback endpoint only. */
+    insecure?: boolean;
+    agent_name?: string;
+    /** When omitted, a version is derived from a digest of the system prompt. */
+    agent_version?: string;
+    /** Tag every record as load-generated. Default true. */
+    synthetic?: boolean;
+    /** Send prompt and completion text. Default false. */
+    capture_content?: boolean;
+    /** Merged into every exported record. Request `tags` win on conflict. */
+    tags?: Record<string, string>;
+    /** Upper bound on how long a record waits before export. */
+    flush_interval_ms?: number;
+  }
+
   export interface ClientOptions {
     base_url?: string;
     api_key?: string;
     model?: string;
     timeout_ms?: number;
     ignore_eos?: boolean;
+    /**
+     * Request encoding. "openai" (default) is chat completions, "anthropic"
+     * is Messages, "responses" is the OpenAI Responses API, and
+     * "providerwire-v4" is the AI SDK wire spoken by Grafana AI Gateway.
+     * Scripts always write OpenAI-shaped requests; the wire translates.
+     */
+    wire?: 'openai' | 'anthropic' | 'responses' | 'providerwire-v4';
     /** Extra HTTP headers sent on every request (gateways, custom auth, tracing). */
     headers?: Record<string, string>;
     /** Default SLO applied to every chat() call that does not override it. */
@@ -38,6 +76,8 @@ declare module 'k6/x/llm' {
     energy?: EnergyModel;
     /** When set, emits llm_cost_usd per request. */
     cost?: CostModel;
+    /** When set, exports one Agent Observability generation per chat() call. */
+    agento11y?: Agento11yOptions;
   }
 
   export interface ToolCallMessage {
@@ -89,8 +129,18 @@ declare module 'k6/x/llm' {
      *  Partial result resolves with `aborted: true`. */
     abort_after_ms?: number;
     /** Cancel the stream after this many content-bearing chunks. Partial
-     *  result resolves with `aborted: true`. */
+     *  result resolves with `aborted: true`. Requires a streamed call. */
     abort_after_tokens?: number;
+
+    /** Default true. `false` sends a unary request: no TTFT, ITL, TPOT or
+     *  chunk count, and samples are tagged `mode=unary`. */
+    stream?: boolean;
+    /** Id this call is exported under. Generated per call when omitted and
+     *  echoed back as `generation_id` on the result. */
+    generation_id?: string;
+    /** Earlier call(s) that caused this one, so an agent workload can declare
+     *  its own call graph to Agent Observability. */
+    parent_generation_ids?: string | string[];
 
     [extra: string]: unknown;
   }
@@ -104,7 +154,15 @@ declare module 'k6/x/llm' {
 
   export interface ChatResult {
     content: string;
+    /** Id the call was exported under; pass it as a parent of a later call. */
+    generation_id: string;
+    /** False for a `stream: false` call. */
+    stream: boolean;
+    /** Time to first content-bearing chunk, reasoning included. 0 for a unary call. */
     ttft_ms: number;
+    /** Time to the first text delta. On a reasoning model this is later than
+     *  ttft_ms by the whole reasoning phase. */
+    ttf_text_ms: number;
     /** Per-chunk inter-arrival in milliseconds. Length equals chunks - 1. */
     itl_ms: number[];
     /**
@@ -118,6 +176,15 @@ declare module 'k6/x/llm' {
     chunks: number;
     prompt_tokens: number;
     completion_tokens: number;
+    /** Prompt-cache read sub-bucket of prompt_tokens, when reported. Not additive. */
+    cached_tokens: number;
+    /** Prompt-cache write sub-bucket of prompt_tokens (Anthropic only). Not additive. */
+    cache_write_tokens: number;
+    /** Reasoning sub-bucket of completion_tokens, when reported. Not additive. */
+    thinking_tokens: number;
+    /** Reasoning stream events seen. About 1 when the provider withholds
+     *  reasoning text, however many reasoning tokens were billed. */
+    thinking_chunks: number;
     finish_reason: string;
     /** True when the stream was cut short by abort_after_ms or abort_after_tokens.
      *  All other fields reflect the partial state at the cutoff. */
@@ -151,6 +218,13 @@ declare module 'k6/x/llm' {
     chat(req: ChatRequest): Promise<ChatResult>;
     /** POST /v1/embeddings. Accepts a single string or a batch. */
     embed(req: EmbedRequest): Promise<EmbedResult>;
+    /**
+     * Export queued Agent Observability records now. Call it at the end of
+     * the iteration when every record matters: k6 has no per-VU teardown, so
+     * records queued after the last flush interval are otherwise lost. A no-op
+     * without `agento11y` configured. Throws when the export fails.
+     */
+    flush(): void;
   }
 
   export interface SessionOptions {

@@ -56,34 +56,6 @@ const client = new llm.Client({
   cost:   COST,
 });
 
-class Session {
-  constructor(systemPrompt) {
-    this.id = `s-${__VU}-${__ITER}`;
-    this.messages = [{ role: 'system', content: systemPrompt }];
-    this.turn = 0;
-  }
-
-  async send(userText) {
-    this.turn++;
-    this.messages.push({ role: 'user', content: userText });
-    const res = await client.chat({
-      messages:    this.messages,
-      max_tokens:  160,
-      temperature: 0,
-      cache_state: this.turn === 1 ? 'cold' : 'warm',
-      tags:        { session_id: this.id, turn: String(this.turn) },
-    });
-    this.messages.push({ role: 'assistant', content: res.content });
-    const snippet = res.content.replace(/\s+/g, ' ').slice(0, 60);
-    console.log(
-      `[vu=${__VU} t=${this.turn}] ttft=${res.ttft_ms.toFixed(0)}ms ` +
-      `tpot=${res.tpot_ms.toFixed(1)}ms toks=${res.completion_tokens} ` +
-      `${this.turn === 1 ? 'COLD' : 'warm'} | "${snippet}…"`,
-    );
-    return res;
-  }
-}
-
 const CONVERSATIONS = [
   ['Explain how a hash join works in one paragraph.',
    'Walk through a small example with 3 rows.',
@@ -101,11 +73,20 @@ const CONVERSATIONS = [
 
 const SYSTEM = 'You are a senior database engineer. Answer concisely.';
 
+// llm.Session keeps the history and stamps session_id, turn and cache_state
+// (cold on turn 1, warm after) on every call, which is what the dashboard's
+// per-turn panels group by.
 export default async function () {
   const conv = CONVERSATIONS[__VU % CONVERSATIONS.length];
-  const s = new Session(SYSTEM);
+  const s = new llm.Session(client, { system: SYSTEM, id: `s-${__VU}-${__ITER}` });
   for (const q of conv) {
-    const r = await s.send(q);
-    if (!r.content) throw new Error(`empty turn ${s.turn}`);
+    const r = await s.send({ content: q, max_tokens: 160, temperature: 0 });
+    if (!r.content) throw new Error(`empty turn ${s.turn()}`);
+    const snippet = r.content.replace(/\s+/g, ' ').slice(0, 60);
+    console.log(
+      `[vu=${__VU} t=${s.turn()}] ttft=${r.ttft_ms.toFixed(0)}ms ` +
+      `tpot=${r.tpot_ms.toFixed(1)}ms toks=${r.completion_tokens} ` +
+      `${s.turn() === 1 ? 'COLD' : 'warm'} | "${snippet}…"`,
+    );
   }
 }

@@ -1,4 +1,5 @@
-// Minimal Poisson-arrival chat workload against an OpenAI-compatible server.
+// Minimal open-model chat workload against an OpenAI-compatible server: a
+// constant arrival rate, so response time never throttles the request rate.
 // Defaults target local Ollama on port 11434. Override LLM_BASE_URL and
 // LLM_MODEL for any other endpoint.
 //
@@ -13,7 +14,7 @@ const DURATION = __ENV.LLM_DURATION ?? '20s';
 
 export const options = {
   scenarios: {
-    poisson: {
+    open_model: {
       executor: 'constant-arrival-rate',
       rate: RATE,
       timeUnit: TIME_UNIT,
