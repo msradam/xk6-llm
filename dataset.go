@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -140,14 +141,19 @@ func (m *module) newDataset(call sobek.ConstructorCall) *sobek.Object {
 	if env == nil {
 		common.Throw(rt, errors.New("llm.Dataset: construct it in the init context, outside the default function"))
 	}
-	// k6 always sets both. modulestest sets neither, so a unit test falls
-	// back to the host filesystem, which is all it has.
+	// k6 always sets both. A test harness may set neither, so the fallback
+	// builds the host filesystem the way k6 does: GetAbsFilePath prefixes a
+	// separator even to a Windows path, and k6 trims it back off on Windows
+	// only, because the raw OS filesystem cannot open "\C:\...".
 	abs, fs := opts.Path, env.FileSystems["file"]
 	if env.CWD != nil {
 		abs = env.GetAbsFilePath(opts.Path)
 	}
 	if fs == nil {
 		fs = fsext.NewOsFs()
+		if runtime.GOOS == "windows" {
+			fs = fsext.NewTrimFilePathSeparatorFs(fs)
+		}
 	}
 	items, err := loadDatasetItems(fs, abs)
 	if err != nil {

@@ -873,7 +873,10 @@ func (c *Client) httpClient() *http.Client {
 // shares: transport errors by kind, and a 4xx or 5xx status by class with the
 // body as the message.
 func (c *Client) send(httpReq *http.Request) (*http.Response, error) {
-	resp, err := c.httpClient().Do(httpReq)
+	// The target URL is the script's own base_url, which is what a load tester
+	// is for. The request goes through k6's transport, where blacklistIPs and
+	// blockHostnames decide what a script may reach.
+	resp, err := c.httpClient().Do(httpReq) // #nosec G704 -- script-supplied target, constrained by k6's blocklist
 	if err != nil {
 		return nil, newChatError(classifyTransportError(err), err)
 	}
