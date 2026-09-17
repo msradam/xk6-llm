@@ -887,3 +887,12 @@ func TestExportGeneration_CarriesCacheWriteTokens(t *testing.T) {
 	require.Equal(t, int64(1900), got.GetUsage().GetCacheReadInputTokens())
 	require.Equal(t, int64(100), got.GetUsage().GetCacheWriteInputTokens())
 }
+
+func TestExportGeneration_CarriesRequestIDAndServerTime(t *testing.T) {
+	t.Parallel()
+	got := exportOnceResult(t, &Agento11yConfig{AgentName: "a"},
+		&chatRequest{body: map[string]any{}},
+		&chatResult{GenerationID: "gen-hdr", RequestID: "req_42", ServerProcessing: 640 * time.Millisecond})
+	require.Equal(t, "req_42", got.GetResponseId(), "the provider's id is what a support ticket keys on")
+	require.InDelta(t, 640.0, got.GetMetadata().AsMap()[MetaServerProcessingMs], 0.001)
+}

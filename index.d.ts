@@ -192,6 +192,15 @@ declare module 'k6/x/llm' {
     /** Tool invocations assembled from the stream. Empty when the model
      *  produced only content. Arguments are raw JSON strings. */
     tool_calls: ChatToolCall[];
+    /** Provider request id from x-request-id, request-id or x-generation-id.
+     *  Empty when the provider sends none. */
+    request_id: string;
+    /** openai-processing-ms as a number. 0 when the provider sends none. */
+    server_processing_ms: number;
+    /** Remaining request quota the provider reported, or -1 when not reported. */
+    ratelimit_remaining_requests: number;
+    /** Remaining token quota the provider reported, or -1 when not reported. */
+    ratelimit_remaining_tokens: number;
   }
 
   export interface EmbedRequest {

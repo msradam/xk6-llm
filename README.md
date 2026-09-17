@@ -83,6 +83,8 @@ Every metric is tagged `model`. Errors are additionally tagged `error_type`. Una
 | `llm_energy_j_per_token` | Trend | `llm_energy_j / completion_tokens`. |
 | `llm_tool_calls` | Counter | Tool invocations the model emitted. Omitted when zero. |
 | `llm_aborted` | Counter | Chat completions cut short by `abort_after_ms` or `abort_after_tokens`. |
+| `llm_ratelimit_remaining_requests` | Gauge | Provider-reported remaining request quota. Emitted only when the provider sends the header. |
+| `llm_ratelimit_remaining_tokens` | Gauge | Provider-reported remaining token quota. Emitted only when the provider sends the header. |
 | `llm_embed_requests` | Counter | Successful `/v1/embeddings` calls. |
 | `llm_embed_errors` | Counter | Embed failures (tag `error_type`). |
 | `llm_embed_duration` | Trend (Time) | End-to-end wall time of an embed call. |
@@ -147,8 +149,14 @@ Returns a Promise resolving to:
   finish_reason:       string,
   aborted:             boolean,
   tool_calls:          { id, name, arguments }[],
+  request_id:          string,    // x-request-id, request-id or x-generation-id
+  server_processing_ms: number,   // openai-processing-ms, 0 when not sent
+  ratelimit_remaining_requests: number, // -1 when not reported
+  ratelimit_remaining_tokens:   number, // -1 when not reported
 }
 ```
+
+A 429 error message carries the `retry-after` header value when the provider sends one. Request fields the extension does not know about pass through unchanged on the OpenAI wire, so `response_format`, `prompt_cache_key`, vLLM's `cache_salt` and similar provider knobs work without support here.
 
 Calls stream by default. A `stream: false` call is sent without streaming on every wire and the whole response is parsed at once. It reports `llm_requests`, `llm_errors`, `llm_request_duration`, `llm_response_headers`, token counts, cost, energy and the `e2el_ms` SLO, all tagged `mode=unary`. It does not report `llm_ttft`, `llm_itl`, `llm_tpot` or `llm_chunks_per_request`, and a `ttft_ms` or `tpot_ms` SLO is not evaluated for it. `abort_after_tokens` requires a streamed call; `abort_after_ms` works for both.
 

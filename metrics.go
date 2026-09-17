@@ -33,6 +33,8 @@ import (
 //	llm_embed_inputs       Counter           number of input strings per embed call
 //	llm_embed_errors       Counter           embed-call failures (tag error_type)
 //	llm_aborted            Counter           chat completions cut short by abort_after_ms or abort_after_tokens
+//	llm_ratelimit_remaining_requests  Gauge  provider-reported remaining requests (only when the header is present)
+//	llm_ratelimit_remaining_tokens    Gauge  provider-reported remaining tokens (only when the header is present)
 type llmMetrics struct {
 	Requests         *metrics.Metric
 	Errors           *metrics.Metric
@@ -58,6 +60,10 @@ type llmMetrics struct {
 	EmbedInputs      *metrics.Metric
 	EmbedErrors      *metrics.Metric
 	Aborted          *metrics.Metric
+	// Rate-limit headroom the provider reported after the call. Gauges, so a
+	// threshold can hold the latest value above a floor.
+	RateLimitRemainingRequests *metrics.Metric
+	RateLimitRemainingTokens   *metrics.Metric
 }
 
 func registerMetrics(vu modules.VU) (llmMetrics, error) {
@@ -94,6 +100,8 @@ func registerMetrics(vu modules.VU) (llmMetrics, error) {
 		{"llm_embed_inputs", metrics.Counter, metrics.Default, &m.EmbedInputs},
 		{"llm_embed_errors", metrics.Counter, metrics.Default, &m.EmbedErrors},
 		{"llm_aborted", metrics.Counter, metrics.Default, &m.Aborted},
+		{"llm_ratelimit_remaining_requests", metrics.Gauge, metrics.Default, &m.RateLimitRemainingRequests},
+		{"llm_ratelimit_remaining_tokens", metrics.Gauge, metrics.Default, &m.RateLimitRemainingTokens},
 	}
 	for _, s := range specs {
 		metric, err := r.NewMetric(s.name, s.typ, s.val)
@@ -181,6 +189,12 @@ func (c *Client) emit(ctx context.Context, model string, r *chatResult, extraTag
 	}
 	if n := len(r.ToolCalls); n > 0 {
 		s.add(mx.ToolCalls, float64(n))
+	}
+	if r.RateLimitRemainingRequests >= 0 {
+		s.add(mx.RateLimitRemainingRequests, float64(r.RateLimitRemainingRequests))
+	}
+	if r.RateLimitRemainingTokens >= 0 {
+		s.add(mx.RateLimitRemainingTokens, float64(r.RateLimitRemainingTokens))
 	}
 
 	// Per-SLO and goodput samples, only when an SLO predicate was supplied.

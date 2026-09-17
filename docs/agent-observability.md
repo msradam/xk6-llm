@@ -49,6 +49,7 @@ For a local receiver, run `agento11y local serve` from the [agento11y plugin](ht
 | `model.name`, `response_model` | The client's `model`. |
 | `usage` | Server-reported prompt and completion tokens, with cache read, cache write and reasoning sub-buckets when the provider reports them. |
 | `stop_reason` | The wire's finish reason, untranslated. |
+| `response_id` | The provider's request id from `x-request-id`, `request-id` or `x-generation-id`, when sent. |
 | `max_tokens`, `temperature`, `top_p`, `tool_choice` | Read from the request before wire translation. An object `tool_choice` collapses to the function it names. |
 | `thinking_enabled` | True when the response carried reasoning tokens or reasoning events. |
 | `tools` | The definitions the model was offered, on every wire shape. The SDK strips descriptions and schemas in metadata-only mode and keeps the names. |
@@ -72,6 +73,7 @@ The Generation schema records time to first token and total duration but nothing
 | `llm.chunks`, `llm.thinking_chunks` | Stream event counts. |
 | `llm.thinking_tokens`, `llm.cached_tokens` | Token sub-buckets, duplicated here for consumers that only read metadata. |
 | `llm.response_headers_ms` | Submit to response headers. |
+| `llm.server_processing_ms` | The provider's `openai-processing-ms`, when sent. Subtracted from the duration it isolates network and gateway time. |
 | `llm.cost_usd`, `llm.energy_j` | Present when the client has a `cost` or `energy` model. |
 | `llm.goodput` | Whether every configured SLO passed. Computed by the same function that emits the k6 Rate samples, so the two cannot disagree. |
 | `llm.aborted` | Present when `abort_after_ms` or `abort_after_tokens` cut the stream. |

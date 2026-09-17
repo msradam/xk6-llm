@@ -217,7 +217,18 @@ type chatResult struct {
 	// Unary is true for a stream: false call. TTFT, ITL, TPOT and Chunks are
 	// not measured for it.
 	Unary bool
-	SLO   *SLOPredicate // copied from request; used by emit() to decide which Rates to push
+	// RequestID is the provider's id for this call, from x-request-id
+	// (OpenAI, vLLM), request-id (Anthropic) or x-generation-id (OpenRouter).
+	// It is what a support ticket or a provider log search keys on.
+	RequestID string
+	// ServerProcessing is openai-processing-ms when the provider sends it.
+	ServerProcessing time.Duration
+	// RateLimitRemainingRequests and RateLimitRemainingTokens are the
+	// provider's remaining quota after this call, or -1 when not reported.
+	// A canary that watches these sees a limit coming before it is hit.
+	RateLimitRemainingRequests int
+	RateLimitRemainingTokens   int
+	SLO                        *SLOPredicate // copied from request; used by emit() to decide which Rates to push
 }
 
 // sloOutcome reports the per-dimension SLO results and whether every
@@ -328,6 +339,10 @@ func (r *chatResult) toJSObject() map[string]any {
 	}
 	out["aborted"] = r.Aborted
 	out["stream"] = !r.Unary
+	out["request_id"] = r.RequestID
+	out["server_processing_ms"] = float64(r.ServerProcessing) / float64(time.Millisecond)
+	out["ratelimit_remaining_requests"] = r.RateLimitRemainingRequests
+	out["ratelimit_remaining_tokens"] = r.RateLimitRemainingTokens
 	if len(r.ToolCalls) > 0 {
 		tcs := make([]map[string]any, len(r.ToolCalls))
 		for i, tc := range r.ToolCalls {
@@ -666,6 +681,7 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		}
 		res.Duration = time.Since(start)
 		res.ResponseHeaders = headersAt.Sub(start)
+		readResponseHeaders(resp.Header, res)
 		return res, nil
 	}
 
@@ -683,7 +699,39 @@ func (c *Client) doChat(ctx context.Context, req *chatRequest) (*chatResult, err
 		return nil, newChatError(errKindStream, err)
 	}
 	res.ResponseHeaders = headersAt.Sub(start)
+	readResponseHeaders(resp.Header, res)
 	return res, nil
+}
+
+// readResponseHeaders lifts the provider-side signals that travel as headers.
+//
+// The request id is the only stable cross-provider correlation key; the rate
+// limit headers are documented by OpenAI and Anthropic and vary by tier, so a
+// value that does not parse is treated as absent. Anthropic does not send a
+// processing-time header, and a header a provider omits leaves the field at
+// its "not reported" value.
+func readResponseHeaders(h http.Header, res *chatResult) {
+	res.RateLimitRemainingRequests = -1
+	res.RateLimitRemainingTokens = -1
+	for _, key := range []string{"X-Request-Id", "Request-Id", "X-Generation-Id"} {
+		if v := h.Get(key); v != "" {
+			res.RequestID = v
+			break
+		}
+	}
+	if ms, err := strconv.ParseFloat(h.Get("Openai-Processing-Ms"), 64); err == nil && ms > 0 {
+		res.ServerProcessing = time.Duration(ms * float64(time.Millisecond))
+	}
+	remaining := func(keys ...string) int {
+		for _, key := range keys {
+			if n, err := strconv.Atoi(h.Get(key)); err == nil && n >= 0 {
+				return n
+			}
+		}
+		return -1
+	}
+	res.RateLimitRemainingRequests = remaining("X-Ratelimit-Remaining-Requests", "Anthropic-Ratelimit-Requests-Remaining")
+	res.RateLimitRemainingTokens = remaining("X-Ratelimit-Remaining-Tokens", "Anthropic-Ratelimit-Tokens-Remaining")
 }
 
 // sseScanner returns a line scanner sized for SSE payloads: a 64K initial
@@ -738,7 +786,12 @@ func (c *Client) send(httpReq *http.Request) (*http.Response, error) {
 		if resp.StatusCode >= 500 {
 			kind = errKindHTTP5xx
 		}
-		return nil, newChatError(kind, fmt.Errorf("http %d: %s", resp.StatusCode, bytes.TrimSpace(raw)))
+		msg := fmt.Sprintf("http %d: %s", resp.StatusCode, bytes.TrimSpace(raw))
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			// The one header on a 429 that tells a script what to do next.
+			msg += " (retry-after: " + ra + ")"
+		}
+		return nil, newChatError(kind, errors.New(msg))
 	}
 	return resp, nil
 }

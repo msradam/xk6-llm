@@ -102,6 +102,10 @@ const (
 	// can split timeouts from 5xx without parsing the error text, which is
 	// stripped in metadata-only mode anyway.
 	MetaErrorType = "llm.error_type"
+	// MetaServerProcessingMs is the provider's own processing time header,
+	// which subtracted from the client-side duration isolates the network and
+	// gateway share of latency.
+	MetaServerProcessingMs = "llm.server_processing_ms"
 )
 
 // parseParentIDs accepts a single id or an array of ids.
@@ -314,6 +318,7 @@ func (c *Client) exportGeneration(ctx context.Context, modelName string, req *ch
 		ParentGenerationIDs: req.parentGenerationIDs,
 		Model:               agento11y.ModelRef{Provider: c.providerName(), Name: modelName},
 		ResponseModel:       modelName,
+		ResponseID:          res.RequestID,
 		StopReason:          res.FinishReason,
 		Usage: model.TokenUsage{
 			InputTokens:  int64(res.PromptTokens),
@@ -496,6 +501,9 @@ func (c *Client) generationMetadata(res *chatResult) map[string]any {
 	}
 	if res.Aborted {
 		meta[MetaAborted] = true
+	}
+	if res.ServerProcessing > 0 {
+		meta[MetaServerProcessingMs] = msOf(res.ServerProcessing)
 	}
 	if !c.cfg.Cost.Empty() {
 		meta[MetaCostUSD] = c.cfg.Cost.USD(res.PromptTokens, res.CompletionTokens)

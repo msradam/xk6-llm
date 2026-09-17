@@ -725,3 +725,37 @@ func TestParseStream_CachedTokens(t *testing.T) {
 	require.Equal(t, 1500, res.PromptTokens)
 	require.Equal(t, 1024, res.CachedTokens)
 }
+
+func TestReadResponseHeaders(t *testing.T) {
+	t.Parallel()
+
+	h := http.Header{}
+	h.Set("x-request-id", "req_abc")
+	h.Set("openai-processing-ms", "812")
+	h.Set("x-ratelimit-remaining-requests", "4999")
+	h.Set("x-ratelimit-remaining-tokens", "0")
+	res := &chatResult{}
+	readResponseHeaders(h, res)
+	require.Equal(t, "req_abc", res.RequestID)
+	require.Equal(t, 812*time.Millisecond, res.ServerProcessing)
+	require.Equal(t, 4999, res.RateLimitRemainingRequests)
+	require.Equal(t, 0, res.RateLimitRemainingTokens, "zero remaining is a real value, not absence")
+
+	// Anthropic spells the same things differently.
+	h = http.Header{}
+	h.Set("request-id", "req_anth")
+	h.Set("anthropic-ratelimit-tokens-remaining", "12000")
+	res = &chatResult{}
+	readResponseHeaders(h, res)
+	require.Equal(t, "req_anth", res.RequestID)
+	require.Equal(t, 12000, res.RateLimitRemainingTokens)
+	require.Equal(t, -1, res.RateLimitRemainingRequests, "absent header reads as -1")
+	require.Zero(t, res.ServerProcessing)
+
+	// Some tiers send sentinel values that must not become a quota reading.
+	h = http.Header{}
+	h.Set("x-ratelimit-remaining-tokens", "-1")
+	res = &chatResult{}
+	readResponseHeaders(h, res)
+	require.Equal(t, -1, res.RateLimitRemainingTokens)
+}
