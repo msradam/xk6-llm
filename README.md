@@ -226,6 +226,16 @@ k6 is a Go binary that executes test scripts written in JavaScript (TypeScript s
 | [`abort.js`](./examples/abort.js) | Abandoned requests with `abort_after_ms` and `abort_after_tokens`, which is how a gateway's cancellation path gets tested. |
 | [`ab-providers.js`](./examples/ab-providers.js) | Two `Client` instances under two scenarios with different `cost` configs. Identical traffic, side-by-side latency and dollar-cost panels in one run. |
 | [`showcase.js`](./examples/showcase.js) | Ramping arrival rate, SLOs, goodput, cost and energy in one run. |
+| [`composite.js`](./examples/composite.js) | An AI feature end to end in one iteration: REST login, a model call offered a tool, the tool run against the application, the answer stored, and the page that renders it opened with `k6/browser`. |
+
+### Combined testing
+
+`k6/x/llm` is an ordinary k6 module, so `http`, `k6/browser` and the model client run in one iteration under one set of tags and one clock. `composite.js` uses that for two checks a single-protocol tool cannot make: the application's own count of tool lookups has to match the tool calls the model made, and the answer has to paint on the page. It ships with a stdlib-only mock application in [`examples/app/`](./examples/app/):
+
+```bash
+python3 examples/app/server.py
+K6_BROWSER_HEADLESS=true ./build/k6 run examples/composite.js
+```
 
 The examples default to Ollama on a laptop. `multi-turn.js` and `showcase.js` ramp to rates a laptop cannot serve; point them at a real inference server or lower `LLM_RATE`.
 
